@@ -3,7 +3,7 @@ package staticsitegen
 import scala.NamedTuple.AnyNamedTuple
 import scala.NamedTuple.*
 import scala.Tuple.Disjoint
-import staticsitegen.Plugin.Zoom
+import javax.xml.validation.Schema
 
 // layout is a function takes a doc page (with a typed front-matter), and a site context,
 //   and returns a concrete html page.
@@ -25,6 +25,7 @@ type Articles = (
 )
 
 type About = (
+  name: String,
   description: String,
 )
 
@@ -108,173 +109,278 @@ extension [T <: AnyNamedTuple](t: T)
     val u: NamedTuple[Names[U], DropNames[U]] = f(using mkref(t)).asInstanceOf
     t1 ++ u
 
-class ContextBuilder[In <: AnyNamedTuple, Out <: AnyNamedTuple](
-    val src: In
-):
-  def build: Context[Out] = ???
 
-object ContextBuilder:
-  extension [In <: AnyNamedTuple, Out <: AnyNamedTuple](
-      b: ContextBuilder[In, Out]
-  )
-    def plugin[P <: Plugin](
-        p: P
-    )(dep: p.Reqs[In])(using p.CanMix[In, Out]): ContextBuilder[In, p.Mix[In, Out]] =
-      p.map(b)(dep)
+object ConfigDSLv1:
+  class Context[Ctx <: AnyNamedTuple] extends Selectable:
+    type Fields = Ctx
+    type Context = this.type
+    def selectDynamic(name: String): Any = ???
 
-def builder[In <: AnyNamedTuple](
-    src0: In
-): ContextBuilder[NamedTuple.From[In], NamedTuple.Empty] =
-  new ContextBuilder(src0.asInstanceOf)
+  sealed trait Here
 
-sealed trait Here
-class Cursor:
-  type Path <: AnyNamedTuple
+  object ZoomOps:
+    type Zoom[P <: AnyNamedTuple, T <: AnyNamedTuple] =
+      T match
+        case NamedTuple[ns1, vs1] =>
+          ZoomHelper[P, ns1, vs1]
+        case _ => Nothing
 
-object Cursor:
-  def apply[T <: AnyNamedTuple]: Cursor { type Path = T } = new Cursor {
-    type Path = T
-  }
-
-trait Plugin:
-  type Path0 <: AnyNamedTuple
-  type Reqs[I <: AnyNamedTuple]
-  type Extras[I <: AnyNamedTuple] <: AnyNamedTuple
-  final type Z[I <: AnyNamedTuple] = Zoom[Path0, I]
-  final type CanMix[I <: AnyNamedTuple, O <: AnyNamedTuple] =
-    Disjoint[Names[O], Names[Extras[I]]] =:= true
-  final type Mix[I <: AnyNamedTuple, O <: AnyNamedTuple] =
-    Concat[O, Extras[I]]
-  final type ZMap[I <: AnyNamedTuple, F[T]] = Z[I] match
-    case NamedTuple[ns, vs] =>
-      NamedTuple[ns, Tuple.Map[
-        vs,
-        [X] =>> F[X]
-      ]]
-  def map[I <: AnyNamedTuple, O <: AnyNamedTuple](
-      b: ContextBuilder[I, O]
-  )(
-      dep: Reqs[I]
-  )(using CanMix[I, O]): ContextBuilder[I, Mix[I, O]]
-
-object Plugin:
-  type Zoom[P <: AnyNamedTuple, T <: AnyNamedTuple] =
-    T match
-      case NamedTuple[ns1, vs1] =>
-        ZoomHelper[P, ns1, vs1]
-      case _ => Nothing
-
-  type ZoomHelper[P <: AnyNamedTuple, Ns1, Vs1] = P match
-    case NamedTuple[ns0, vs0] => ZoomHelper0[ns0, vs0, Ns1, Vs1]
-    case _                    => Nothing
-
-  type ZoomHelper0[
-      Ns0 <: Tuple,
-      Ts0 <: Tuple,
-      Ns1 <: Tuple,
-      Ts1 <: Tuple
-  ] =
-    (Ns0, Ts0) match
-      case (n *: _, Here *: _) => ZoomHelper1[n, Ns1, Ts1]
-      case _                   => Nothing
-
-  type ZoomHelper1[N, Ns1 <: Tuple, Ts1 <: Tuple] =
-    (Ns1, Ts1) match
-      case (N *: _, v *: _)     => v
-      case (_ *: ns2, _ *: vs2) => ZoomHelper1[N, ns2, vs2]
+    type ZoomHelper[P <: AnyNamedTuple, Ns1, Vs1] = P match
+      case NamedTuple[ns0, vs0] => ZoomHelper0[ns0, vs0, Ns1, Vs1]
       case _                    => Nothing
 
-trait ZoomResult[P <: AnyNamedTuple, I <: AnyNamedTuple]:
-  final type Result = Zoom[P, I]
+    type ZoomHelper0[
+        Ns0 <: Tuple,
+        Ts0 <: Tuple,
+        Ns1 <: Tuple,
+        Ts1 <: Tuple
+    ] =
+      (Ns0, Ts0) match
+        case (n *: _, Here *: _) => ZoomHelper1[n, Ns1, Ts1]
+        case _                   => Nothing
 
-object ZoomResult:
-  given [P <: AnyNamedTuple, I <: AnyNamedTuple]: ZoomResult[P, I]()
+    type ZoomHelper1[N, Ns1 <: Tuple, Ts1 <: Tuple] =
+      (Ns1, Ts1) match
+        case (N *: _, v *: _)     => v
+        case (_ *: ns2, _ *: vs2) => ZoomHelper1[N, ns2, vs2]
+        case _                    => Nothing
 
-object lookupLayouts extends Plugin:
-  type Path0 = (layouts: Here)
-  type Extras[I <: AnyNamedTuple] = (layouts: Reqs[I])
-  def map[I <: AnyNamedTuple, O <: AnyNamedTuple](
-      b: ContextBuilder[I, O]
-  )(dep: Reqs[I])(using CanMix[I, O]): ContextBuilder[I, Mix[I, O]] = ???
 
-  type Reqs[I <: AnyNamedTuple] = ZMap[I, [X] =>> X match
-    case Layout[a] => Layout2[a]]
+  // class Cursor:
+  //   type Path <: AnyNamedTuple
 
-class Context[Ctx <: AnyNamedTuple] extends Selectable:
-  type Fields = Ctx
-  type Context = this.type
-  def selectDynamic(name: String): Any = ???
+  // object Cursor:
+  //   def apply[T <: AnyNamedTuple]: Cursor { type Path = T } = new Cursor {
+  //     type Path = T
+  //   }
 
-val builder0 = builder(Breeze2)
+end ConfigDSLv1
 
-val SiteCtx = builder0
-  .plugin(lookupLayouts)(
-    (
-      article = Layout2[Article],
-      articles = Layout2[Articles],
-      about = Layout2[About]
+object ConfigDSLv2:
+  import ConfigDSLv1.*
+
+  class Layout2[T] // currently no way in this design to consume a Layout2 that has the full site context.
+
+  class ContextBuilder[In <: AnyNamedTuple, Out <: AnyNamedTuple](
+      val src: In
+  ):
+    def build: Context[Out] = ???
+
+  object ContextBuilder:
+    extension [In <: AnyNamedTuple, Out <: AnyNamedTuple](
+        b: ContextBuilder[In, Out]
     )
-  )
-  .build
+      def plugin[P <: Plugin](
+          p: P
+      )(dep: p.Reqs[In])(using p.CanMix[In, Out]): ContextBuilder[In, p.Mix[In, Out]] =
+        p.map(b)(dep)
 
-// TODO: as you can see it is effectively useless to do this plugin design as the match type doesnt work.
-// TODO: last resort - split up the names and values at the start, and then recombine them at the end?
+  def builder[In <: AnyNamedTuple](
+      src0: In
+  ): ContextBuilder[NamedTuple.From[In], NamedTuple.Empty] =
+    new ContextBuilder(src0.asInstanceOf)
 
-type Stuff = (a: (x: Int, y: Int), b: (x: Int, y: Int))
-val a: Plugin.Zoom[(a: Here), Stuff] = (x = 1, y = 2)
+  trait Plugin:
+    type Path0 <: AnyNamedTuple
+    type Reqs[I <: AnyNamedTuple]
+    type Extras[I <: AnyNamedTuple] <: AnyNamedTuple
+    final type Z[I <: AnyNamedTuple] = ZoomOps.Zoom[Path0, I]
+    final type CanMix[I <: AnyNamedTuple, O <: AnyNamedTuple] =
+      Disjoint[Names[O], Names[Extras[I]]] =:= true
+    final type Mix[I <: AnyNamedTuple, O <: AnyNamedTuple] =
+      Concat[O, Extras[I]]
+    final type ZMap[I <: AnyNamedTuple, F[T]] = Z[I] match
+      case NamedTuple[ns, vs] =>
+        NamedTuple[ns, Tuple.Map[
+          vs,
+          [X] =>> F[X]
+        ]]
+    def map[I <: AnyNamedTuple, O <: AnyNamedTuple](
+        b: ContextBuilder[I, O]
+    )(
+        dep: Reqs[I]
+    )(using CanMix[I, O]): ContextBuilder[I, Mix[I, O]]
 
-// val foo = Breeze0.layouts
-// val m: Plugin.Zoom[(layouts: Here), Breeze0.type] = foo
+  object lookupLayouts extends Plugin:
+    type Path0 = (layouts: Here)
+    type Extras[I <: AnyNamedTuple] = (layouts: Reqs[I])
+    def map[I <: AnyNamedTuple, O <: AnyNamedTuple](
+        b: ContextBuilder[I, O]
+    )(dep: Reqs[I])(using CanMix[I, O]): ContextBuilder[I, Mix[I, O]] = ???
 
-class Wrapper[T <: AnyNamedTuple](x: T)
-object Wrapper:
-  type Extract[W <: Wrapper[?]] <: AnyNamedTuple = W match
-    case Wrapper[t] => t
+    type Reqs[I <: AnyNamedTuple] = ZMap[I, [X] =>> X match
+      case Layout[a] => Layout2[a]]
 
-val Person = (
-  name = "John",
-  age = 30
-)
+  val builder0 = builder(Breeze2)
 
-type NameExtractor[T <: AnyNamedTuple] = T match
-  case NamedTuple[ns, vs] => Any // TODO: further refine ns and vs
-  case _                  => Nothing
+  val SiteCtx = builder0
+    .plugin(lookupLayouts)(
+      (
+        article = Layout2[Article],
+        articles = Layout2[Articles],
+        about = Layout2[About]
+      )
+    )
+    .build
 
-val wrap = Wrapper(Person)
-val name: NameExtractor[Wrapper.Extract[wrap.type]] = "John"
+end ConfigDSLv2
 
-val wrap2 = Wrapper(Breeze2)
-val breeze2Layouts: Plugin.Zoom[(layouts: Here), Wrapper.Extract[wrap2.type]] =
-  Breeze2.layouts
+object ConfigDSLv3:
+  import ConfigDSLv1.*
 
-class Page[T] extends Selectable:
-  type Fields = T
-  def selectDynamic(name: String): Any = ???
+  class ContextBuilder[In <: AnyNamedTuple](
+      val src: In
+  ):
+    type Reqs[Schema <: AnyNamedTuple] <: AnyNamedTuple
+    type Output <: AnyNamedTuple
+    final type Schema = NamedTuple.From[Output]
 
-class Layout2[T]
+    def plugin(
+        p: lookupLayouts.type
+    )(using p.CanMix[Output]): ContextBuilder.Aux[In, p.MixReq[In, Reqs], p.MixOut[In, Output]] =
+      p.map(this)
 
-trait Layout3[T]:
-  type Ctx
-  def render(page: Page[T], ctx: Ctx): String
+    def build(reqs: Reqs[Output]): Context[Output] = ???
 
-object Layout3:
-  def apply[T, Ctx0](
-      f: (Page[T], Ctx0) => String
-  ): Layout3[T] { type Ctx = Ctx0 } =
-    new {
-      type Ctx = Ctx0
-      def render(page: Page[T], ctx: Ctx): String = f(page, ctx)
-    }.asInstanceOf
+  object ContextBuilder:
+    type Aux[In <: AnyNamedTuple, Reqs0[Schema0 <: AnyNamedTuple] <: AnyNamedTuple, Out0 <: AnyNamedTuple] =
+      ContextBuilder[In] {
+        type Reqs[Schema <: AnyNamedTuple] = Reqs0[Schema]
+        type Output = Out0
+      }
 
-// TODO: SiteCtx.Context causes a cyclic reference.
-val article2 = Layout3 { (page: Page[Article], ctx: SiteCtx.Context) =>
-  s"""
-  <h1>${page.title}</h1>
-  <p>${page.description}</p>
-  <p>${page.published}</p>
-  <ul>${ctx.layouts.article}
-  """
-}
+  def builder[In <: AnyNamedTuple](
+      src0: In
+  ): ContextBuilder.Aux[NamedTuple.From[In], [X] =>> NamedTuple.Empty, NamedTuple.Empty] =
+    new ContextBuilder(src0.asInstanceOf).asInstanceOf
+
+  trait Plugin:
+    final type IsDisjoint[A <: AnyNamedTuple, B <: AnyNamedTuple] =
+      Disjoint[Names[A], Names[B]] =:= true
+
+    final type CanMix[O <: AnyNamedTuple] =
+      IsDisjoint[O, ExtraKeys[Here]]
+
+    final type Z[I <: AnyNamedTuple] = ZoomOps.Zoom[ExtraKeys[Here], I]
+    final type MixOut[I <: AnyNamedTuple, O <: AnyNamedTuple] =
+      Concat[O, ExtraKeys[MkOut[I]]]
+    final type MixReq[I <: AnyNamedTuple, F[Schema0 <: AnyNamedTuple] <: AnyNamedTuple] = [Schema <: AnyNamedTuple] =>>
+      Concat[F[Schema], ExtraKeys[MkReq[I, Schema]]]
+    final type ZMap[I <: AnyNamedTuple, F[T]] <: AnyNamedTuple = Z[I] match
+      case NamedTuple[ns, vs] =>
+        NamedTuple[ns, Tuple.Map[
+          vs,
+          [X] =>> F[X]
+        ]]
+      case _ => Nothing
+
+    type MkOut[I <: AnyNamedTuple] <: AnyNamedTuple
+    type MkReq[I <: AnyNamedTuple, Schema <: AnyNamedTuple] <: AnyNamedTuple
+    type ExtraKeys[Out] <: AnyNamedTuple
+
+    def map[I <: AnyNamedTuple](
+        b: ContextBuilder[I]
+    )(using CanMix[b.Output]): ContextBuilder.Aux[I, MixReq[I, b.Reqs], MixOut[I, b.Output]]
+  end Plugin
+
+  object lookupLayouts extends Plugin:
+    type ExtraKeys[Out] = (layouts: Out)
+
+    override type MkOut[I <: AnyNamedTuple] = ZMap[I, [X] =>> X match
+      case Layout[a] => Layout2[a]
+    ]
+    override type MkReq[I <: AnyNamedTuple, Schema <: AnyNamedTuple] = ZMap[I, [X] =>> X match
+      case Layout[a] => Layout3[a, Schema]
+    ]
+    def map[I <: AnyNamedTuple](
+        b: ContextBuilder[I]
+    )(using CanMix[b.Output]): ContextBuilder.Aux[I, MixReq[I, b.Reqs], MixOut[I, b.Output]] = ???
+
+  val SiteBuilder = builder(Breeze2)
+    .plugin(lookupLayouts)
+
+  val SiteCtx2 = SiteBuilder
+    .build(
+      (
+        layouts = (
+          article = article2,
+          articles = articles2,
+          about = about2
+        )
+      )
+    )
+
+  class Page[T] extends Selectable:
+    type Fields = T
+    def selectDynamic(name: String): Any = ???
+
+  class Layout2[T]
+
+  trait Layout3[T, Schema <: AnyNamedTuple] extends Layout2[T]:
+    def render(page: Page[T], ctx: Context[Schema]): String
+
+  object Layout3:
+    def apply[T, Schema <: AnyNamedTuple](
+        f: (Page[T], Context[Schema]) => String
+    ): Layout3[T, NamedTuple.From[Schema]] =
+      new {
+        def render(page: Page[T], ctx: Context[Schema]): String = f(page, ctx)
+      }.asInstanceOf
+
+  // TODO: SiteCtx.Context causes a cyclic reference.
+  lazy val article2 = Layout3 { (page: Page[Article], ctx: Context[SiteBuilder.Schema]) =>
+    s"""
+    <h1>${page.title}</h1>
+    <p>${page.description}</p>
+    <p>${page.published}</p>
+    <ul>${ctx.layouts.article}</ul>
+    """
+  }
+
+  lazy val articles2 = Layout3 { (page: Page[Articles], ctx: Context[SiteBuilder.Schema]) =>
+    s"""
+    <h1>Articles</h1>
+    <p>${page.description}</p>
+    ${for article <- 1 to 10 yield "??? (TODO: lookup article in ctx)"}
+    <ul>${ctx.layouts.article}</ul>
+    """
+  }
+
+  lazy val about2 = Layout3 { (page: Page[About], ctx: Context[SiteBuilder.Schema]) =>
+    s"""
+    <h1>About ${page.name}</h1>
+    <p>${page.description}</p>
+    """
+  }
+
+end ConfigDSLv3
+
+// type Stuff = (a: (x: Int, y: Int), b: (x: Int, y: Int))
+// val a: Plugin.Zoom[(a: Here), Stuff] = (x = 1, y = 2)
+
+// // val foo = Breeze0.layouts
+// // val m: Plugin.Zoom[(layouts: Here), Breeze0.type] = foo
+
+// class Wrapper[T <: AnyNamedTuple](x: T)
+// object Wrapper:
+//   type Extract[W <: Wrapper[?]] <: AnyNamedTuple = W match
+//     case Wrapper[t] => t
+
+// val Person = (
+//   name = "John",
+//   age = 30
+// )
+
+// type NameExtractor[T <: AnyNamedTuple] = T match
+//   case NamedTuple[ns, vs] => Any // TODO: further refine ns and vs
+//   case _                  => Nothing
+
+// val wrap = Wrapper(Person)
+// val name: NameExtractor[Wrapper.Extract[wrap.type]] = "John"
+
+// val wrap2 = Wrapper(Breeze2)
+// val breeze2Layouts: Plugin.Zoom[(layouts: Here), Wrapper.Extract[wrap2.type]] =
+//   Breeze2.layouts
 
 // object Breeze extends model.Theme:
 
