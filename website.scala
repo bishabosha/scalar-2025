@@ -296,15 +296,28 @@ object ConfigDSLv3:
         b: ContextBuilder[I]
     )(using CanMix[b.Output]): ContextBuilder.Aux[I, MixReq[I, b.Reqs], MixOut[I, b.Output]] = ???
 
-  val SiteBuilder = builder(Breeze2)
+  val SiteBuilder = builder(Breeze)
     .plugin(lookupLayouts)
 
-  val SiteCtx2 = SiteBuilder
+  val SiteCtx = SiteBuilder
     .build(
       (
         layouts = (
           article = article2,
           articles = articles2,
+        )
+      )
+    )
+
+  val SiteBuilder2 = builder(Breeze2)
+    .plugin(lookupLayouts)
+
+  val SiteCtx2 = SiteBuilder2
+    .build(
+      (
+        layouts = (
+          article = Layout3(article2).widen,
+          articles = Layout3(articles2).widen,
           about = about2
         )
       )
@@ -317,7 +330,15 @@ object ConfigDSLv3:
   class Layout2[T]
 
   trait Layout3[T, Schema <: AnyNamedTuple] extends Layout2[T]:
+    outer =>
     def render(page: Page[T], ctx: Context[Schema]): String
+
+    def widen[Schema2 <: AnyNamedTuple](using SubSchema[Schema, Schema2]): Layout3[T, Schema2] =
+      new {
+        def render(page: Page[T], ctx: Context[Schema2]): String = outer.render(page, ctx.asInstanceOf)
+      }.asInstanceOf
+
+  trait SubSchema[Parent <: AnyNamedTuple, Child <: AnyNamedTuple]
 
   object Layout3:
     def apply[T, Schema <: AnyNamedTuple](
@@ -327,31 +348,27 @@ object ConfigDSLv3:
         def render(page: Page[T], ctx: Context[Schema]): String = f(page, ctx)
       }.asInstanceOf
 
-  // TODO: SiteCtx.Context causes a cyclic reference.
-  lazy val article2 = Layout3 { (page: Page[Article], ctx: Context[SiteBuilder.Schema]) =>
+  def article2(page: Page[Article], ctx: Context[SiteBuilder.Schema]): String =
     s"""
     <h1>${page.title}</h1>
     <p>${page.description}</p>
     <p>${page.published}</p>
     <ul>${ctx.layouts.article}</ul>
     """
-  }
 
-  lazy val articles2 = Layout3 { (page: Page[Articles], ctx: Context[SiteBuilder.Schema]) =>
+  def articles2(page: Page[Articles], ctx: Context[SiteBuilder.Schema]) =
     s"""
     <h1>Articles</h1>
     <p>${page.description}</p>
     ${for article <- 1 to 10 yield "??? (TODO: lookup article in ctx)"}
     <ul>${ctx.layouts.article}</ul>
     """
-  }
 
-  lazy val about2 = Layout3 { (page: Page[About], ctx: Context[SiteBuilder.Schema]) =>
+  def about2(page: Page[About], ctx: Context[SiteBuilder2.Schema]) =
     s"""
     <h1>About ${page.name}</h1>
     <p>${page.description}</p>
     """
-  }
 
 end ConfigDSLv3
 
