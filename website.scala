@@ -5,6 +5,10 @@ import scala.NamedTuple.*
 import scala.Tuple.Disjoint
 import javax.xml.validation.Schema
 
+import substructural.Sub.Substructural
+import scala.util.NotGiven
+import scala.annotation.implicitNotFound
+
 // layout is a function takes a doc page (with a typed front-matter), and a site context,
 //   and returns a concrete html page.
 
@@ -32,24 +36,16 @@ type About = (
 class Layout[T]
 class Docs[Ts]
 class Doc[T]
-// class Refs[T <: AnyNamedTuple, U <: AnyNamedTuple](factory: Ref[T] ?=> U)
 
 class Ref[T](names: List[String]) extends Selectable:
   // might need to capture path at the type level, so to be sure the reference corresponds to a path with correct depth
   type Fields = NamedTuple.Map[NamedTuple.From[T], [X] =>> Ref[X]]
+  type Outer = T
   def selectDynamic(name: String): Any =
     Ref(names :+ name) // create a new Ref that captures the path
 
-// def article: Layout[Article] = ???
-// def articles: Layout[Articles] = ???
-// def about: Layout[About] = ???
-
 def mkref[T <: AnyNamedTuple](t: T): Ref[T] = Ref(Nil)
 def ref[T <: AnyNamedTuple: Ref as ref]: Ref[T] = ref
-// def refs[T <: AnyNamedTuple](using ref: Ref[T])[U <: AnyNamedTuple](
-//     f: Ref[T] ?=> U
-// ): Refs[T, U] = Refs(f)
-
 
 val Breeze = (
   metadata = (
@@ -64,8 +60,10 @@ val Breeze = (
     // Doc is a file of that name, and Docs is a directory of files.
     articles = (index = Doc[Articles], pages = Docs[Article]),
   ),
-  extraHead = Seq.empty,
-  extraFoot = Seq.empty
+  extras = (
+    extraHead = Seq.empty,
+    extraFoot = Seq.empty
+  )
 )
   .and:
     (
@@ -84,8 +82,10 @@ val Breeze2 = (
   site = Breeze.site ++ (
     about = (index = Doc[About])
   ),
-  extraHead = Breeze.extraHead ++ Seq.empty /* include all the goodies */,
-  extraFoot = Breeze.extraFoot ++ Seq.empty /* include all the goodies */
+  extras = (
+    extraHead = Breeze.extras.extraHead ++ Seq.empty,
+    extraFoot = Breeze.extras.extraFoot ++ Seq.empty
+  )
 ).and:
   (
     // important to note here that currently the refs in Breeze.nav have to be resolved dynamically.
@@ -259,13 +259,13 @@ object ConfigDSLv3:
       Disjoint[Names[A], Names[B]] =:= true
 
     final type CanMix[O <: AnyNamedTuple] =
-      IsDisjoint[O, ExtraKeys[Here]]
+      IsDisjoint[O, ExtraOutKeys[Here]]
 
-    final type Z[I <: AnyNamedTuple] = ZoomOps.Zoom[ExtraKeys[Here], I]
+    final type Z[I <: AnyNamedTuple] = ZoomOps.Zoom[ExtraInKeys[Here], I]
     final type MixOut[I <: AnyNamedTuple, O <: AnyNamedTuple] =
-      Concat[O, ExtraKeys[MkOut[I]]]
+      Concat[O, ExtraOutKeys[MkOut[I]]]
     final type MixReq[I <: AnyNamedTuple, F[Schema0 <: AnyNamedTuple] <: AnyNamedTuple] = [Schema <: AnyNamedTuple] =>>
-      Concat[F[Schema], ExtraKeys[MkReq[I, Schema]]]
+      Concat[F[Schema], ExtraInKeys[MkReq[I, Schema]]]
     final type ZMap[I <: AnyNamedTuple, F[T]] <: AnyNamedTuple = Z[I] match
       case NamedTuple[ns, vs] =>
         NamedTuple[ns, Tuple.Map[
@@ -276,7 +276,8 @@ object ConfigDSLv3:
 
     type MkOut[I <: AnyNamedTuple] <: AnyNamedTuple
     type MkReq[I <: AnyNamedTuple, Schema <: AnyNamedTuple] <: AnyNamedTuple
-    type ExtraKeys[Out] <: AnyNamedTuple
+    type ExtraOutKeys[Out] <: AnyNamedTuple
+    type ExtraInKeys[Out] <: AnyNamedTuple
 
     def map[I <: AnyNamedTuple](
         b: ContextBuilder[I]
@@ -284,11 +285,24 @@ object ConfigDSLv3:
   end Plugin
 
   object lookupLayouts extends Plugin:
-    type ExtraKeys[Out] = (layouts: Out)
+    type ExtraInKeys[Out] = (layouts: Out)
+    type ExtraOutKeys[Out] = ExtraInKeys[Out]
 
     override type MkOut[I <: AnyNamedTuple] = ZMap[I, [X] =>> X match
       case Layout[a] => Layout2[a]
     ]
+    override type MkReq[I <: AnyNamedTuple, Schema <: AnyNamedTuple] = ZMap[I, [X] =>> X match
+      case Layout[a] => Layout3[a, Schema]
+    ]
+    def map[I <: AnyNamedTuple](
+        b: ContextBuilder[I]
+    )(using CanMix[b.Output]): ContextBuilder.Aux[I, MixReq[I, b.Reqs], MixOut[I, b.Output]] = ???
+
+  object navPlugin extends Plugin:
+    type ExtraInKeys[Out] = (nav: Out)
+    type ExtraOutKeys[Out] = (nav: Out)
+
+    override type MkOut[I <: AnyNamedTuple] = NamedTuple.Empty
     override type MkReq[I <: AnyNamedTuple, Schema <: AnyNamedTuple] = ZMap[I, [X] =>> X match
       case Layout[a] => Layout3[a, Schema]
     ]
@@ -316,15 +330,15 @@ object ConfigDSLv3:
     .build(
       (
         layouts = (
-          article = Layout3(article2).widen,
-          articles = Layout3(articles2).widen,
+          article = ???, //Layout3(article2).widen,
+          articles = ???, //Layout3(articles2).widen,
           about = about2
         )
       )
     )
 
   class Page[T] extends Selectable:
-    type Fields = T
+    type Fields = NamedTuple.From[T]
     def selectDynamic(name: String): Any = ???
 
   class Layout2[T]
@@ -333,12 +347,10 @@ object ConfigDSLv3:
     outer =>
     def render(page: Page[T], ctx: Context[Schema]): String
 
-    def widen[Schema2 <: AnyNamedTuple](using SubSchema[Schema, Schema2]): Layout3[T, Schema2] =
+    def widen[Schema2 <: AnyNamedTuple](using Substructural[Schema, Schema2]): Layout3[T, Schema2] =
       new {
         def render(page: Page[T], ctx: Context[Schema2]): String = outer.render(page, ctx.asInstanceOf)
       }.asInstanceOf
-
-  trait SubSchema[Parent <: AnyNamedTuple, Child <: AnyNamedTuple]
 
   object Layout3:
     def apply[T, Schema <: AnyNamedTuple](
