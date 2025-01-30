@@ -103,11 +103,8 @@ val Breeze2 = (
 
 extension [T <: AnyNamedTuple](t: T)
   def and[U <: AnyNamedTuple](f: Ref[T] ?=> U)(using
-      ev: Tuple.Disjoint[Names[T], Names[U]] =:= true
-  ): NamedTuple.Concat[T, U] =
-    val t1: NamedTuple[Names[T], DropNames[T]] = t.asInstanceOf
-    val u: NamedTuple[Names[U], DropNames[U]] = f(using mkref(t)).asInstanceOf
-    t1 ++ u
+      ev: Substructural.Compose[T, U]
+  ): ev.Out = t ++ f(using mkref(t))
 
 
 object ConfigDSLv1:

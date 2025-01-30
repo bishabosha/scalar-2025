@@ -13,7 +13,7 @@ class Pages2[T]
 //     case Page1[t]  => Page2[t]
 //     case Pages1[t] => Pages2[t]
 
-// val y1: Substructural[(foo: (bar: 1)), (foo: (bar: Int, qux: String), other: Boolean)] = Substructural.proven
+val y1: Substructural[(foo: (bar: 1)), (foo: (bar: Int, qux: String), other: Boolean)] = Substructural.proven
 //   val y2 =
 //     Substructural.provenLeaf[(foo: (index: Page1[String], pages: Pages1[String])), Page1to2]
 
