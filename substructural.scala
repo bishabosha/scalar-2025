@@ -4,22 +4,37 @@ import NamedTuple.AnyNamedTuple
 import NamedTuple.NamedTuple
 import scala.util.NotGiven
 import scala.annotation.meta.field
+import scala.util.boundary.break
+import scala.util.boundary
 
 object Sub:
-  sealed trait BaseOp:
-    type Out
-  sealed trait NTOp extends BaseOp:
-    override type Out <: AnyNamedTuple
+  // sealed trait BaseOp:
+  //   type Out
+  sealed trait NTOp: // extends BaseOp:
+    // override type Out <: AnyNamedTuple
+    type Out <: AnyNamedTuple
 
   sealed trait Substructural[A <: AnyNamedTuple, B <: AnyNamedTuple]
 
   object Substructural:
     sealed trait Z
 
+    object Keys:
+      import scala.compiletime.ops.string.+
+      type Encoded[N <: String, T] = NamedTuple[N *: EmptyTuple, T *: EmptyTuple]
+
+      sealed trait Predicate[F[_] <: Boolean]
+
+      type IsTreeOf = "special.IsTreeOf"
+
+    type IsTreeOf[F[_] <: Boolean] = Keys.Encoded[Keys.IsTreeOf, Keys.Predicate[F]]
+
     sealed trait WrapSub[A <: AnyNamedTuple, F[_]] extends NTOp
     sealed trait WrapSub1[A <: AnyNamedTuple, F[_ <: AnyNamedTuple]] extends NTOp
 
     sealed trait MapLeaves[A <: AnyNamedTuple, F[_]] extends NTOp
+
+    sealed trait Requires[Req <: AnyNamedTuple, T <: AnyNamedTuple]
 
     sealed trait Compose[Base <: AnyNamedTuple, Extra <: AnyNamedTuple] extends NTOp:
       extension (base: Base)
@@ -28,25 +43,31 @@ object Sub:
           val u: Tuple = extra.asInstanceOf
           (t ++ u).asInstanceOf[Out]
 
-    sealed trait Zoom[P <: AnyNamedTuple, A <: AnyNamedTuple] extends BaseOp
+    sealed trait Zoom[P <: AnyNamedTuple, A <: AnyNamedTuple]
+
+    type ZoomWithOut[P <: AnyNamedTuple, A <: AnyNamedTuple] = Zoom[P, A] { type Out }
 
     object Proof extends NTOp
       with Substructural[NamedTuple.Empty, NamedTuple.Empty]
+      with Requires[NamedTuple.Empty, NamedTuple.Empty]
       with MapLeaves[NamedTuple.Empty, [_] =>> Any]
       with Compose[NamedTuple.Empty, NamedTuple.Empty]
       with WrapSub[NamedTuple.Empty, [_] =>> Any]
       with WrapSub1[NamedTuple.Empty, [_] =>> Any]
 
-    object BaseProof extends BaseOp
+    object BaseProof extends AnyRef // BaseOp
       with Substructural.Zoom[NamedTuple.Empty, NamedTuple.Empty]
 
-    inline given proven: [A <: AnyNamedTuple, B <: AnyNamedTuple] => Substructural[A, B] =
+    transparent inline given proven: [A <: AnyNamedTuple, B <: AnyNamedTuple] => Substructural[A, B] =
       ${macros.provenImpl[A, B]}
+
+    transparent inline given provenRequires: [Req <: AnyNamedTuple, T <: AnyNamedTuple] => Substructural.Requires[Req, T] =
+      ${macros.provenRequiresImpl[Req, T]}
 
     transparent inline given provenLeaf: [A <: AnyNamedTuple, F[_]] => Substructural.MapLeaves[A, F] =
       ${macros.provenLeafImpl[A, F]}
 
-    transparent inline given provenZoom: [P <: AnyNamedTuple, A <: AnyNamedTuple] => Substructural.Zoom[P, A] =
+    transparent inline given provenZoom: [P <: AnyNamedTuple, A <: AnyNamedTuple] => Substructural.ZoomWithOut[P, A] =
       ${macros.provenZoomImpl[P, A]}
 
     transparent inline given provenCompose: [Base <: AnyNamedTuple, Extra <: AnyNamedTuple] => Substructural.Compose[Base, Extra] =
@@ -68,8 +89,8 @@ object Sub:
       type NTData = Map[String, Type[?]]
       type NTOrdData = (List[String], List[Type[?]])
 
-      def reportError(msg: String)(using Quotes) =
-        quotes.reflect.report.throwError(msg)
+      def errExpr[T](msg: String)(using Quotes): Expr[Nothing] =
+        '{ compiletime.error(${Expr(msg)}) }
 
       def dbg(data: NTData)(using Quotes) =
         data.map({case (k, '[v]) => (k, Type.show[v])}).toString
@@ -79,19 +100,22 @@ object Sub:
 
       def provenWrapSubImpl[A <: AnyNamedTuple: Type, F[_]: Type](using Quotes): Expr[Substructural.WrapSub[A, F]] =
         NamedTupleRefl.use:
-          def go(base: Type[?]): Type[?] =
+          def go(base: Type[?]): Option[Type[?]] =
             base match
               case ntOps.NamedTupleOrdData((ns, vs)) =>
-                val vs1 = vs.map:
-                  case tp @ '[type nt <: AnyNamedTuple; `nt`] =>
-                    go(tp) match
-                      case '[out] => Type.of[F[out]]
-                  case tp => tp
-                ntOps.packNamedTuple(ns, vs1)
-
-              case _ => reportError(s"Cannot wrap Substructual.WrapSub[${Type.show[A]}, ${Type.show[F]}]")
+                boundary:
+                  val vs1 =
+                    vs.map:
+                      case tp @ '[type nt <: AnyNamedTuple; `nt`] =>
+                        go(tp) match
+                          case Some('[out]) => Type.of[F[out]]
+                          case _ => break(None)
+                      case tp => tp
+                  Some(ntOps.packNamedTuple(ns, vs1))
+              case _ => None
           go(Type.of[A]) match
-            case '[out] => '{ Proof.asInstanceOf[Substructural.WrapSub[A, F] { type Out = out }] }
+            case Some('[out]) => '{ Proof.asInstanceOf[Substructural.WrapSub[A, F] { type Out = out }] }
+            case _ => errExpr(s"Cannot wrap Substructual.WrapSub[${Type.show[A]}, ${Type.show[F]}]")
 
       def provenWrapSub1Impl[A <: AnyNamedTuple: Type, F[_ <: AnyNamedTuple]: Type](using Quotes): Expr[Substructural.WrapSub1[A, F]] =
         NamedTupleRefl.use:
@@ -104,7 +128,7 @@ object Sub:
               ntOps.packNamedTuple(ns, vs1) match
                 case '[out] => '{ Proof.asInstanceOf[Substructural.WrapSub1[A, F] { type Out = out }] }
 
-            case _ => reportError(s"Cannot wrap Substructual.WrapSub1[${Type.show[A]}, ${Type.show[F]}]")
+            case _ => errExpr(s"Cannot wrap Substructual.WrapSub1[${Type.show[A]}, ${Type.show[F]}]")
 
 
       def provenComposeImpl[Base <: AnyNamedTuple: Type, Extra <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.Compose[Base, Extra]] =
@@ -114,29 +138,30 @@ object Sub:
               case (ntOps.NamedTupleOrdData((ns1, vs1)), ntOps.NamedTupleOrdData((ns2, vs2))) =>
                 val lookup = ns1.toSet
                 if ns2.exists(lookup) then
-                  reportError(s"Cannot add new keys ${ns2.filterNot(lookup).mkString(", ")} in Substructual.Compose[${Type.show[Base]}, ${Type.show[Extra]}]")
+                  errExpr(s"Cannot add new keys ${ns2.filterNot(lookup).mkString(", ")} in Substructual.Compose[${Type.show[Base]}, ${Type.show[Extra]}]")
                 else
                   ntOps.packNamedTuple((ns1 ++ ns2) -> (vs1 ++ vs2)) match
                     case '[out] => '{ Proof.asInstanceOf[Substructural.Compose[Base, Extra] { type Out = out }] }
 
-              case _ => reportError(s"Cannot compose Substructual.Zoom[${Type.show[Base]}, ${Type.show[Extra]}]")
+              case _ => errExpr(s"Cannot compose Substructual.Zoom[${Type.show[Base]}, ${Type.show[Extra]}]")
           go(Type.of[Base], Type.of[Extra])
 
-      def provenZoomImpl[P <: AnyNamedTuple: Type, A <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.Zoom[P, A]] =
+      def provenZoomImpl[P <: AnyNamedTuple: Type, A <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.ZoomWithOut[P, A]] =
         NamedTupleRefl.use:
-          def go(left: Type[?], right: Type[?], path: List[String]): Expr[Substructural.Zoom[P, A]] =
+          def go(left: Type[?], right: Type[?], path: List[String]): Expr[Substructural.ZoomWithOut[P, A]] =
             (left, right) match
-              case (ntOps.NamedTupleOrdData((n1 :: _, v1 :: _)), ntOps.NamedTupleData(data)) =>
-                data.get(n1) match
-                  case Some(v2) =>
-                    v1 match
-                      case '[Z] => v2 match
-                        case '[out] => '{ BaseProof.asInstanceOf[Substructural.Zoom[P, A] { type Out = out }] }
-                      case _ => go(v1, v2, n1 :: path)
+              case (ntOps.NamedTupleOrdData((n :: _, t :: _)), ntOps.NamedTupleData(data)) =>
+                data.get(n) match
+                  case Some(u) =>
+                    t match
+                      case '[Substructural.Z] => u match
+                        case '[out] =>
+                          '{ BaseProof.asInstanceOf[Substructural.Zoom[P, A] { type Out = out }] }
+                      case _ => go(t, u, n :: path)
                   case _ =>
-                    reportError(s"Cannot Substructual.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")}):\n missing key $n1 in ${dbg(data)}")
+                    errExpr(s"Cannot Substructual.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")}):\n missing key $n in ${dbg(data)}")
 
-              case _ => reportError(s"Cannot zoom Substructual.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")})")
+              case _ => errExpr(s"Cannot zoom Substructual.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")})")
           go(Type.of[P], Type.of[A], path = Nil)
 
       def provenLeafImpl[A <: AnyNamedTuple: Type, F[_]: Type](using Quotes): Expr[Substructural.MapLeaves[A, F]] =
@@ -145,7 +170,7 @@ object Sub:
             case Some('[out]) =>
               '{ Proof.asInstanceOf[Substructural.MapLeaves[A, F] { type Out = out } ] }
             case _ =>
-              reportError(s"Cannot map leaves Substructual.MapLeaves[${Type.show[A]}, ${Type.show[F]}]")
+              errExpr(s"Cannot map leaves Substructual.MapLeaves[${Type.show[A]}, ${Type.show[F]}]")
 
       def mapLeaves[A <: AnyNamedTuple: Type, F[_]: Type](using Quotes, NamedTupleRefl): Option[Type[?]] =
         def go(in: Type[?]): Type[?] =
@@ -156,12 +181,62 @@ object Sub:
             case '[t] => Type.of[F[t]]
         Some(go(Type.of[A]))
 
+      def provenRequiresImpl[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.Requires[Req, T]] =
+        NamedTupleRefl.use:
+          val res = hasRequired[Req, T]
+          if res.isEmpty then
+            '{ Proof.asInstanceOf[Substructural.Requires[Req, T]] }
+          else
+            errExpr(res)
+
+      def hasRequired[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): String =
+        (Type.of[Req], Type.of[T]) match
+          case (ntOps.NamedTupleData(reqs), ntOps.NamedTupleData(t)) => tryMatch(reqs, t)
+          case _ => s"Cannot prove Substructual.Requires[${Type.show[Req]}, ${Type.show[T]}]"
+
+      def tryMatch(reqs: NTData, t: NTData)(using Quotes, NamedTupleRefl): String =
+        if reqs.keySet.subsetOf(t.keySet) then
+          val (errs, _) = reqs
+            .view
+            .map:
+              case (field, pred) => pred match
+                case ntOps.NamedTupleSpecData(Left(ntOps.keysRefl.IsTreeOf -> '[Keys.Predicate[fn]])) =>
+                  t(field) match
+                    case '[type in <: AnyNamedTuple; `in`] =>
+                      isNTTreeOf[fn, in]
+                    case _ =>
+                      "Expected a NamedTuple"
+                case ntOps.NamedTupleSpecData(Right(subreqs)) =>
+                  t(field) match
+                    case ntOps.NamedTupleData(subt) =>
+                      tryMatch(subreqs, subt)
+                    case '[err] =>
+                      s"Expected ${Type.show[err]} to be a NamedTuple"
+                case '[l] => t(field) match
+                  case '[r] =>
+                    subTypesStr[l, r]
+            .partition(_.nonEmpty)
+          errs.mkString(", ")
+        else
+          s"Missing keys ${reqs.keySet.diff(t.keySet).mkString(", ")} in ${dbg(t)}"
+
+      def isNTTreeOf[F[_] <: Boolean: Type, A <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): String =
+        def go(tpe: Type[?]): String =
+          tpe match
+            case ntOps.NamedTupleData(data) =>
+              val (errs, _) = data.valuesIterator.map(go).partition(_.nonEmpty)
+              errs.mkString(", ")
+            case '[u] => Type.of[F[u]] match
+              case '[true] => ""
+              case '[res] => s"Predicate ${Type.show[res]} did not reduce for leaf type ${Type.show[u]}"
+        go(Type.of[A])
+
       def provenImpl[A <: AnyNamedTuple: Type, B <: AnyNamedTuple: Type](using Quotes): Expr[Substructural[A, B]] =
         NamedTupleRefl.use:
           if isSubstructural[A, B] then
             '{ Proof.asInstanceOf[Substructural[A, B]] }
           else
-            reportError(s"Cannot prove Substructual[${Type.show[A]}, ${Type.show[B]}]")
+            errExpr(s"Cannot prove Substructual[${Type.show[A]}, ${Type.show[B]}]")
 
       def isSubstructural[A <: AnyNamedTuple: Type, B <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): Boolean =
         (Type.of[A], Type.of[B]) match
@@ -178,6 +253,9 @@ object Sub:
         else
           false
 
+      def subTypesStr[A: Type, B: Type](using Quotes): String =
+        if subTypes[A, B] then "" else s"Expected ${Type.show[A]} to be a subtype of ${Type.show[B]}"
+
       def subTypes[A: Type, B: Type](using Quotes): Boolean =
         import quotes.reflect._
         TypeRepr.of[A] <:< TypeRepr.of[B]
@@ -190,11 +268,25 @@ object Sub:
         val NamedTupleType = Symbol.requiredModule("scala.NamedTuple").typeMember("NamedTuple")
         val NamedTupleTypeRef = NamedTupleType.typeRef
 
+        object keysRefl:
+          val IsTreeOf: String = compiletime.constValue[Keys.IsTreeOf]
+          val specKeys: Set[String] = Set(IsTreeOf)
+
         object NamedTupleData:
           def unapply(tp: Type[?]): Option[Map[String, Type[?]]] = unpackNamedTuple(tp): (nmes, tps) =>
             var buf = Map.empty[String, Type[?]]
             nmes.lazyZip(tps).foreach((n, t) => buf = buf.updated(n, t))
             buf
+
+        object NamedTupleSpecData:
+          def unapply(tp: Type[?]): Option[Either[(String, Type[?]), Map[String, Type[?]]]] =
+            unpackNamedTuple(tp): (nmes, tps) =>
+              if nmes.sizeIs == 1 && keysRefl.specKeys(nmes.head) then
+                Left(nmes.head -> tps.head)
+              else
+                var buf = Map.empty[String, Type[?]]
+                nmes.lazyZip(tps).foreach((n, t) => buf = buf.updated(n, t))
+                Right(buf)
 
         object NamedTupleOrdData:
           def unapply(tp: Type[?]): Option[(List[String], List[Type[?]])] = unpackNamedTuple(tp): (nmes, tps) =>
@@ -254,26 +346,42 @@ object Sub:
           if loop[T] then Some(buf.result()) else None
 
         def unapply(t: TypeRepr): Option[(TypeRepr, TypeRepr)] =
-          t match
-            case AppliedType(tycon, nmes :: vals :: Nil) if tycon.typeSymbol == NamedTupleType =>
-              Some((nmes, vals))
-            case tp: TermRef =>
-              unapply(tp.widenTermRefByName)
-            case tp: TypeRef =>
-              unapply(tp.dealiasKeepOpaques)
-            case OrType(tp1, tp2) =>
-              (unapply(tp1), unapply(tp2)) match
-                case (Some(lhsName, lhsVal), Some(rhsName, rhsVal)) if lhsName == rhsName =>
-                  Some(lhsName, OrType(lhsVal, rhsVal))
-                case _ => None
-            case AndType(tp1, tp2) =>
-              (unapply(tp1), unapply(tp2)) match
-                case (Some(lhsName, lhsVal), Some(rhsName, rhsVal)) if lhsName == rhsName =>
-                  Some(lhsName, AndType(lhsVal, rhsVal))
-                case (lhs, None) => lhs
-                case (None, rhs) => rhs
-                case _ => None
-            case tpe => None
+          var count = 0
+          def go(t: TypeRepr): Option[(TypeRepr, TypeRepr)] =
+            count += 1
+            if count > 1000 then
+              val tpeShow = t.show
+              report.warning(s"Too many iterations in NamedTupleRefl.unapply, stuck on $tpeShow")
+              return None
+            t match
+              case AppliedType(tycon, nmes :: vals :: Nil) if tycon.typeSymbol == NamedTupleType =>
+                Some((nmes, vals))
+              case tp @ AppliedType(tycon, _) if tycon.typeSymbol.isAliasType =>
+                go(tp.dealiasKeepOpaques)
+              case tp: TermRef =>
+                go(tp.widenTermRefByName)
+              case tp: TypeRef =>
+                if tp.typeSymbol.isClassDef then
+                  None // class can't be a NamedTuple
+                else
+                  go(tp.dealiasKeepOpaques)
+              case OrType(tp1, tp2) =>
+                (go(tp1), go(tp2)) match
+                  case (Some(lhsName, lhsVal), Some(rhsName, rhsVal)) if lhsName == rhsName =>
+                    Some(lhsName, OrType(lhsVal, rhsVal))
+                  case _ => None
+              case AndType(tp1, tp2) =>
+                (go(tp1), go(tp2)) match
+                  case (Some(lhsName, lhsVal), Some(rhsName, rhsVal)) if lhsName == rhsName =>
+                    Some(lhsName, AndType(lhsVal, rhsVal))
+                  case (lhs, None) => lhs
+                  case (None, rhs) => rhs
+                  case _ => None
+              case tpe => None
+          end go
+          go(t)
+        end unapply
+
       end NamedTupleRefl
 
 //   class Base

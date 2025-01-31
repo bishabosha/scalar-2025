@@ -47,11 +47,31 @@ sealed trait SiteThemeProvider[Ctx <: AnyNamedTuple]:
 object SiteThemeProvider:
   import SiteTheme.Parsed
 
-  inline given compute: [Ctx <: AnyNamedTuple]
-    => (zMeta: Substructural.Zoom[(metadata: Substructural.Z), Ctx])
-    => (zSite: Substructural.Zoom[(site: Substructural.Z), Ctx])
-    => (zExtras: Substructural.Zoom[(extras: Substructural.Z), Ctx])
-    => (zNav: Substructural.Zoom[(nav: Substructural.Z), Ctx])
+  type IsDoc[T] <: Boolean = T match
+    case Doc[_]  => true
+    case Docs[_] => true
+
+  type IsDocRef[T] <: Boolean = T match
+    case Ref[t] => IsDoc[t]
+
+  type ThemeInMask = (
+    metadata: (name: String, author: String),
+    extras: (extraHead: Seq[String], extraFoot: Seq[String]),
+    site: Substructural.IsTreeOf[IsDoc],
+    nav: Substructural.IsTreeOf[IsDocRef],
+  )
+
+  // TODO:
+  // selectable based on the Mask (which should be able to use match types because its encoded)
+  // then each field selection gives you an operation that can type safe extract a sub-Cursor?
+  // operation will require the Requires proof to be passed in.
+
+  transparent inline given compute: [Ctx <: AnyNamedTuple]
+    => (maskedBy: Substructural.Requires[ThemeInMask, Ctx]) // TODO: requirements type - so left is lower bound of right
+    => (zMeta: Substructural.ZoomWithOut[(metadata: Substructural.Z), Ctx])
+    => (zSite: Substructural.ZoomWithOut[(site: Substructural.Z), Ctx])
+    => (zExtras: Substructural.ZoomWithOut[(extras: Substructural.Z), Ctx])
+    => (zNav: Substructural.ZoomWithOut[(nav: Substructural.Z), Ctx])
     => (site0: Substructural.MapLeaves[zSite.Out & AnyNamedTuple, DocMap] )
     => (nav0: Substructural.MapLeaves[zNav.Out & AnyNamedTuple, [T] =>> DocMap[UnliftRef[T]]] )
     => (SiteThemeProvider[Ctx] { type Out = (
@@ -67,6 +87,7 @@ object SiteThemeProvider:
     )](???)
 
 sealed trait Cursor[T] extends Selectable:
+  final type Ref = T
   final type Fields = NamedTuple.Map[T & AnyNamedTuple, Cursor]
   final type AtLeaf = NotGiven[T <:< AnyNamedTuple]
   def focus(using @implicitNotFound("Cannot focus on a non-leaf node") ev: AtLeaf): T
