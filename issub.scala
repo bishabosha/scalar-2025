@@ -51,6 +51,11 @@ val p = other.NTParser.of[NT, NTMir]
 val q1 = p.site.articles.index
 val q2 = p.nav.yesIAmATreeParser
 
+val pBreeze = other.NTParser.from[other.SiteThemeProvider.ThemeInMask]()(other.breezeCursor)
+val qBreeze1 = pBreeze.site.yesIAmATreeParser
+val qBreeze2 = pBreeze.nav.yesIAmATreeParser
+val qBreeze3 = pBreeze.extras.extraHead.yesIAmALeaf
+val qBreeze4 = pBreeze.metadata.author.yesIAmALeaf
 
 // val m2: other.IsNTEncoded[NTMir] = true
 //   type Page1to2[T] = T match

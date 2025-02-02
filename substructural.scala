@@ -38,6 +38,14 @@ object Sub:
     sealed trait NTEncoded[N <: Tuple, V <: Tuple] extends NTMirror
 
     sealed trait Requires[Req <: AnyNamedTuple, T <: AnyNamedTuple]
+
+    // TODO: break this down into a composite, only need transparent inline def to generate encoded form, in the
+    // same way we generate the cursor, then test if requirements checking can be done with match types only?
+    // (i.e. by looking in the encoded form.)
+    // benchmark match types vs macros?
+    type HasRequirements[Req <: AnyNamedTuple, T <: AnyNamedTuple] = Requires[Req, T] {
+      type Encoded <: NTMirror
+    }
     type RequirementsOf[Req <: AnyNamedTuple] = [T <: AnyNamedTuple] =>> Requires[Req, T] {
       type Encoded <: NTMirror
     }
@@ -121,7 +129,7 @@ object Sub:
               case _ => None
           go(Type.of[A]) match
             case Some('[out]) => '{ Proof.asInstanceOf[Substructural.WrapSub[A, F] { type Out = out }] }
-            case _ => errExpr(s"Cannot wrap Substructual.WrapSub[${Type.show[A]}, ${Type.show[F]}]")
+            case _ => errExpr(s"Cannot wrap Substructural.WrapSub[${Type.show[A]}, ${Type.show[F]}]")
 
       def provenWrapSub1Impl[A <: AnyNamedTuple: Type, F[_ <: AnyNamedTuple]: Type](using Quotes): Expr[Substructural.WrapSub1[A, F]] =
         NamedTupleRefl.use:
@@ -134,7 +142,7 @@ object Sub:
               ntOps.packNamedTuple(ns, vs1) match
                 case '[out] => '{ Proof.asInstanceOf[Substructural.WrapSub1[A, F] { type Out = out }] }
 
-            case _ => errExpr(s"Cannot wrap Substructual.WrapSub1[${Type.show[A]}, ${Type.show[F]}]")
+            case _ => errExpr(s"Cannot wrap Substructural.WrapSub1[${Type.show[A]}, ${Type.show[F]}]")
 
 
       def provenComposeImpl[Base <: AnyNamedTuple: Type, Extra <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.Compose[Base, Extra]] =
@@ -144,12 +152,12 @@ object Sub:
               case (ntOps.NamedTupleOrdData((ns1, vs1)), ntOps.NamedTupleOrdData((ns2, vs2))) =>
                 val lookup = ns1.toSet
                 if ns2.exists(lookup) then
-                  errExpr(s"Cannot add new keys ${ns2.filterNot(lookup).mkString(", ")} in Substructual.Compose[${Type.show[Base]}, ${Type.show[Extra]}]")
+                  errExpr(s"Cannot add new keys ${ns2.filterNot(lookup).mkString(", ")} in Substructural.Compose[${Type.show[Base]}, ${Type.show[Extra]}]")
                 else
                   ntOps.packNamedTuple((ns1 ++ ns2) -> (vs1 ++ vs2)) match
                     case '[out] => '{ Proof.asInstanceOf[Substructural.Compose[Base, Extra] { type Out = out }] }
 
-              case _ => errExpr(s"Cannot compose Substructual.Zoom[${Type.show[Base]}, ${Type.show[Extra]}]")
+              case _ => errExpr(s"Cannot compose Substructural.Zoom[${Type.show[Base]}, ${Type.show[Extra]}]")
           go(Type.of[Base], Type.of[Extra])
 
       def provenZoomImpl[P <: AnyNamedTuple: Type, A <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.ZoomWithOut[P, A]] =
@@ -165,9 +173,9 @@ object Sub:
                           '{ BaseProof.asInstanceOf[Substructural.Zoom[P, A] { type Out = out }] }
                       case _ => go(t, u, n :: path)
                   case _ =>
-                    errExpr(s"Cannot Substructual.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")}):\n missing key $n in ${dbg(data)}")
+                    errExpr(s"Cannot Substructural.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")}):\n missing key $n in ${dbg(data)}")
 
-              case _ => errExpr(s"Cannot zoom Substructual.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")})")
+              case _ => errExpr(s"Cannot zoom Substructural.Zoom[${Type.show[P]}, ${Type.show[A]}] (${path.reverse.mkString(".")})")
           go(Type.of[P], Type.of[A], path = Nil)
 
       def provenLeafImpl[A <: AnyNamedTuple: Type, F[_]: Type](using Quotes): Expr[Substructural.MapLeaves[A, F]] =
@@ -176,7 +184,7 @@ object Sub:
             case Some('[out]) =>
               '{ Proof.asInstanceOf[Substructural.MapLeaves[A, F] { type Out = out } ] }
             case _ =>
-              errExpr(s"Cannot map leaves Substructual.MapLeaves[${Type.show[A]}, ${Type.show[F]}]")
+              errExpr(s"Cannot map leaves Substructural.MapLeaves[${Type.show[A]}, ${Type.show[F]}]")
 
       def mapLeaves[A <: AnyNamedTuple: Type, F[_]: Type](using Quotes, NamedTupleRefl): Option[Type[?]] =
         def go(in: Type[?]): Type[?] =
@@ -212,7 +220,7 @@ object Sub:
       def hasRequired[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): Either[List[String], Unit] =
         (Type.of[Req], Type.of[T]) match
           case (ntOps.NamedTupleData(reqs), ntOps.NamedTupleData(t)) => tryMatch(reqs, t)
-          case _ => Left(List(s"Cannot prove Substructual.Requires[${Type.show[Req]}, ${Type.show[T]}]"))
+          case _ => Left(List(s"Cannot prove Substructural.Requires[${Type.show[Req]}, ${Type.show[T]}]"))
 
       def tryMatch(reqs: NTData, t: NTData)(using Quotes, NamedTupleRefl): Either[List[String], Unit] =
         if reqs.keySet.subsetOf(t.keySet) then
@@ -265,7 +273,7 @@ object Sub:
           if isSubstructural[A, B] then
             '{ Proof.asInstanceOf[Substructural[A, B]] }
           else
-            errExpr(s"Cannot prove Substructual[${Type.show[A]}, ${Type.show[B]}]")
+            errExpr(s"Cannot prove Substructural[${Type.show[A]}, ${Type.show[B]}]")
 
       def isSubstructural[A <: AnyNamedTuple: Type, B <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): Boolean =
         (Type.of[A], Type.of[B]) match

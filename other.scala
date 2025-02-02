@@ -50,7 +50,8 @@ sealed trait NTTreeParser[F[_] <: Boolean, Encoded <: Substructural.NTMirror] ex
   def yesIAmATreeParser: Int = 23
   // def mapLeaves[F[_]](f: [T] =>> (t: T) => F[T])
 
-sealed trait NTParserLeaf[T] extends NTParserTop
+sealed trait NTParserLeaf[T] extends NTParserTop:
+  def yesIAmALeaf: Int = 23
 
 final class NTParser[Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror] extends NTParserFields:
   final type Fields = ZipMaskEncoded[Mask, Encoded, NTParser.MapSub]
@@ -70,6 +71,9 @@ object NTParser:
       case Substructural.Keys.Predicate[f] *: EmptyTuple =>
         NTTreeParser[f, Encoded0]
     case _ => NTParser[Mask, Encoded0]
+
+  def from[Mask <: AnyNamedTuple]()[Ctx <: AnyNamedTuple](c: Cursor[Ctx])(using ev: Substructural.HasRequirements[Mask, Ctx]): NTParser[Mask, ev.Encoded] =
+    NTParser[Mask, ev.Encoded]()
 
   def of[Mask <: AnyNamedTuple, Encoded0 <: Substructural.NTMirror]: NTParser[Mask, Encoded0] =
     NTParser[Mask, Encoded0]()
