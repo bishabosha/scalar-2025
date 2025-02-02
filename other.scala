@@ -46,16 +46,31 @@ sealed trait NTParserTop
 sealed trait NTParserFields extends NTParserTop with Selectable:
   type Fields <: AnyNamedTuple
 
+sealed trait NTTreeParser[F[_] <: Boolean, Encoded <: Substructural.NTMirror] extends NTParserTop:
+  def yesIAmATreeParser: Int = 23
+  // def mapLeaves[F[_]](f: [T] =>> (t: T) => F[T])
+
 sealed trait NTParserLeaf[T] extends NTParserTop
 
 final class NTParser[Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror] extends NTParserFields:
   final type Fields = ZipMaskEncoded[Mask, Encoded, NTParser.MapSub]
   def selectDynamic(name: String): NTParserTop = ???
 
+type IsNamedTuple[T <: AnyNamedTuple] = T
+
 object NTParser:
   type MapSub[Mask, Encoded0] <: NTParserTop = IsNTEncoded[Encoded0] match
-    case true => NTParser[Mask & AnyNamedTuple, Encoded0]
+    case true => Mask match
+      case NamedTuple[ns, vs] => MapInner[ns, vs, Mask, Encoded0]
+      case _ => Nothing
     case _ => NTParserLeaf[Encoded0]
+
+  type MapInner[Ns <: Tuple, Vs <: Tuple, Mask <: AnyNamedTuple, Encoded0] <: NTParserTop = Ns match
+    case Substructural.Keys.IsTreeOf *: EmptyTuple => Vs match
+      case Substructural.Keys.Predicate[f] *: EmptyTuple =>
+        NTTreeParser[f, Encoded0]
+    case _ => NTParser[Mask, Encoded0]
+
   def of[Mask <: AnyNamedTuple, Encoded0 <: Substructural.NTMirror]: NTParser[Mask, Encoded0] =
     NTParser[Mask, Encoded0]()
 
