@@ -9,6 +9,29 @@ class Pages2[T]
 
 @main def test =
   ???
+
+type NT = (site: (articles: (index: String, pages: Seq[String])))
+type NTMir = Substructural.NTEncoded[
+  "site" *: EmptyTuple,
+  (
+    Substructural.NTEncoded[
+      "articles" *: EmptyTuple,
+      (
+        Substructural.NTEncoded[
+          ("index", "pages"),
+          (String, Seq[String])
+        ]
+      ) *: EmptyTuple
+    ]
+  ) *: EmptyTuple
+]
+
+// val p: other.ZipMaskEncoded[NT, NTMir, other.NTParser.MapSub] = true
+val p = other.NTParser.of[NT, NTMir]
+val q = p.site
+
+
+// val m2: other.IsNTEncoded[NTMir] = true
 //   type Page1to2[T] = T match
 //     case Page1[t]  => Page2[t]
 //     case Pages1[t] => Pages2[t]

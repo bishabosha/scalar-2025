@@ -5,6 +5,7 @@ import substructural.Sub.Substructural
 import scala.util.NotGiven
 
 import NamedTuple.AnyNamedTuple
+import NamedTuple.NamedTuple
 import scala.annotation.implicitNotFound
 
 import staticsitegen.{Doc, Docs, Ref, Layout, Article, Articles, and, ref}
@@ -20,6 +21,43 @@ type DocMap[T] = T match
 
 type UnliftRef[T] = T match
   case Ref[t] => t
+
+type ZipMaskEncoded[Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror, F[_,_]] <: AnyNamedTuple = (Mask, Encoded) match
+  case (NamedTuple[ns1,vs1],Substructural.NTEncoded[ns2, vs2]) => ZipMaskLoop[ns1, vs1, ns2, vs2, F, EmptyTuple, EmptyTuple]
+  case _ => AnyNamedTuple
+
+type ZipMaskLoop[Ns <: Tuple, Vs <: Tuple, ENs <: Tuple, EVs <: Tuple, F[_,_], AccNs <: Tuple, AccVs <: Tuple] <: AnyNamedTuple = (Ns, Vs) match
+  case (n *: ns, v *: vs) => ZipLookup[n, v, ENs, EVs, F] match
+    case Some[t] => ZipMaskLoop[ns, vs, ENs, EVs, F, n *: AccNs, t *: AccVs]
+    case _ => AnyNamedTuple
+  case (EmptyTuple, EmptyTuple) => NamedTuple[Tuple.Reverse[AccNs], Tuple.Reverse[AccVs]]
+  case _ => AnyNamedTuple
+
+type ZipLookup[N <: Tuple, V <: Tuple, ENs <: Tuple, EVs <: Tuple, F[_,_]] <: Option[Any] = (ENs, EVs) match
+  case (N *: _, v *: _) => Some[F[V, v]]
+  case (_ *: ns, _ *: vs) => ZipLookup[N, V, ns, vs, F]
+  case _ => None.type
+
+type IsNTEncoded[Encoded] <: Boolean = Encoded match
+  case Substructural.NTEncoded[ns2, vs2] => true
+  case _ => false
+
+sealed trait NTParserTop
+sealed trait NTParserFields extends NTParserTop with Selectable:
+  type Fields <: AnyNamedTuple
+
+sealed trait NTParserLeaf[T] extends NTParserTop
+
+final class NTParser[Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror] extends NTParserFields:
+  final type Fields = ZipMaskEncoded[Mask, Encoded, NTParser.MapSub]
+  def selectDynamic(name: String): NTParserTop = ???
+
+object NTParser:
+  type MapSub[Mask, Encoded0] <: NTParserTop = IsNTEncoded[Encoded0] match
+    case true => NTParser[Mask & AnyNamedTuple, Encoded0]
+    case _ => NTParserLeaf[Encoded0]
+  def of[Mask <: AnyNamedTuple, Encoded0 <: Substructural.NTMirror]: NTParser[Mask, Encoded0] =
+    NTParser[Mask, Encoded0]()
 
 sealed trait SiteTheme[T <: AnyNamedTuple]:
   final type Ctx = T

@@ -34,7 +34,13 @@ object Sub:
 
     sealed trait MapLeaves[A <: AnyNamedTuple, F[_]] extends NTOp
 
+    sealed trait NTMirror
+    sealed trait NTEncoded[N <: Tuple, V <: Tuple] extends NTMirror
+
     sealed trait Requires[Req <: AnyNamedTuple, T <: AnyNamedTuple]
+    type RequirementsOf[Req <: AnyNamedTuple] = [T <: AnyNamedTuple] =>> Requires[Req, T] {
+      type Encoded <: NTMirror
+    }
 
     sealed trait Compose[Base <: AnyNamedTuple, Extra <: AnyNamedTuple] extends NTOp:
       extension (base: Base)
@@ -61,7 +67,7 @@ object Sub:
     transparent inline given proven: [A <: AnyNamedTuple, B <: AnyNamedTuple] => Substructural[A, B] =
       ${macros.provenImpl[A, B]}
 
-    transparent inline given provenRequires: [Req <: AnyNamedTuple, T <: AnyNamedTuple] => Substructural.Requires[Req, T] =
+    transparent inline given provenRequires: [Req <: AnyNamedTuple, T <: AnyNamedTuple] => Substructural.RequirementsOf[Req][T] =
       ${macros.provenRequiresImpl[Req, T]}
 
     transparent inline given provenLeaf: [A <: AnyNamedTuple, F[_]] => Substructural.MapLeaves[A, F] =
@@ -181,20 +187,34 @@ object Sub:
             case '[t] => Type.of[F[t]]
         Some(go(Type.of[A]))
 
-      def provenRequiresImpl[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.Requires[Req, T]] =
-        NamedTupleRefl.use:
-          val res = hasRequired[Req, T]
-          if res.isEmpty then
-            '{ Proof.asInstanceOf[Substructural.Requires[Req, T]] }
-          else
-            errExpr(res)
+      def encodeNamedTuple[T <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): Either[List[String], Type[?]] =
+        def go(tpe: Type[?]): Either[String, Type[?]] = tpe match
+          case ntOps.NamedTupleOrdData(ns, vs) =>
+            val (errs, vsEncoded) = vs.map(go).partitionMap(identity)
+            if errs.nonEmpty && errs.exists(_.nonEmpty) then
+              Left(errs.head) // TODO, encode path from root in error?
+            else
+              Right(ntOps.packNamedTupleMirror(ns -> vsEncoded))
+          case '[type err <: AnyNamedTuple; err] =>
+            Left(s"expected a concrete named tuple type, got ${Type.show[err]}")
+          case leaf =>
+            Right(leaf)
+        go(Type.of[T]).left.map(List(_))
 
-      def hasRequired[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): String =
+      def provenRequiresImpl[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.RequirementsOf[Req][T]] =
+        NamedTupleRefl.use:
+          hasRequired[Req, T].flatMap(_ => encodeNamedTuple[T]) match
+            case Right(encodedRes) =>
+              encodedRes match
+                case '[type encoded <: NTMirror; `encoded`] => '{ Proof.asInstanceOf[Substructural.Requires[Req, T] { type Encoded = encoded }] }
+            case Left(errs) => errExpr(errs.mkString("> ", "\n> ", "\n"))
+
+      def hasRequired[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): Either[List[String], Unit] =
         (Type.of[Req], Type.of[T]) match
           case (ntOps.NamedTupleData(reqs), ntOps.NamedTupleData(t)) => tryMatch(reqs, t)
-          case _ => s"Cannot prove Substructual.Requires[${Type.show[Req]}, ${Type.show[T]}]"
+          case _ => Left(List(s"Cannot prove Substructual.Requires[${Type.show[Req]}, ${Type.show[T]}]"))
 
-      def tryMatch(reqs: NTData, t: NTData)(using Quotes, NamedTupleRefl): String =
+      def tryMatch(reqs: NTData, t: NTData)(using Quotes, NamedTupleRefl): Either[List[String], Unit] =
         if reqs.keySet.subsetOf(t.keySet) then
           val (errs, _) = reqs
             .view
@@ -205,30 +225,39 @@ object Sub:
                     case '[type in <: AnyNamedTuple; `in`] =>
                       isNTTreeOf[fn, in]
                     case _ =>
-                      "Expected a NamedTuple"
+                      Left(List("Expected a NamedTuple"))
                 case ntOps.NamedTupleSpecData(Right(subreqs)) =>
                   t(field) match
                     case ntOps.NamedTupleData(subt) =>
                       tryMatch(subreqs, subt)
                     case '[err] =>
-                      s"Expected ${Type.show[err]} to be a NamedTuple"
+                      Left(List(s"Expected ${Type.show[err]} to be a NamedTuple"))
                 case '[l] => t(field) match
                   case '[r] =>
-                    subTypesStr[l, r]
-            .partition(_.nonEmpty)
-          errs.mkString(", ")
+                    Left(List(subTypesStr[l, r]))
+            .toList
+            .partitionMap(identity)
+          val errs0 = errs.flatten
+          if errs0.nonEmpty && errs0.exists(_.nonEmpty) then
+            Left(errs0)
+          else
+            Right(())
         else
-          s"Missing keys ${reqs.keySet.diff(t.keySet).mkString(", ")} in ${dbg(t)}"
+          Left(List(s"Missing keys ${reqs.keySet.diff(t.keySet).mkString(", ")} in ${dbg(t)}"))
 
-      def isNTTreeOf[F[_] <: Boolean: Type, A <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): String =
-        def go(tpe: Type[?]): String =
+      def isNTTreeOf[F[_] <: Boolean: Type, A <: AnyNamedTuple: Type](using Quotes, NamedTupleRefl): Either[List[String], Unit] =
+        def go(tpe: Type[?]): Either[List[String], Unit] =
           tpe match
             case ntOps.NamedTupleData(data) =>
-              val (errs, _) = data.valuesIterator.map(go).partition(_.nonEmpty)
-              errs.mkString(", ")
+              val (errs, _) = data.valuesIterator.toList.map(go).partitionMap(identity)
+              val errs0 = errs.flatten
+              if errs0.nonEmpty && errs0.exists(_.nonEmpty) then
+                Left(errs0)
+              else
+                Right(())
             case '[u] => Type.of[F[u]] match
-              case '[true] => ""
-              case '[res] => s"Predicate ${Type.show[res]} did not reduce for leaf type ${Type.show[u]}"
+              case '[true] => Right(())
+              case '[res] => Left(List(s"Predicate ${Type.show[res]} did not reduce for leaf type ${Type.show[u]}"))
         go(Type.of[A])
 
       def provenImpl[A <: AnyNamedTuple: Type, B <: AnyNamedTuple: Type](using Quotes): Expr[Substructural[A, B]] =
@@ -311,6 +340,14 @@ object Sub:
           (nmes0, tps0) match
             case ('[type nmes <: Tuple; `nmes`], '[type tps <: Tuple; `tps`]) =>
               Type.of[NamedTuple[nmes, tps]]
+
+        def packNamedTupleMirror(data: NTOrdData): Type[?] =
+          val (nmes, tps) = data
+          val nmes0 = listToType(nmes)(n => ConstantType(StringConstant(n)).asType)
+          val tps0 = listToType(tps)(identity)
+          (nmes0, tps0) match
+            case ('[type nmes <: Tuple; `nmes`], '[type tps <: Tuple; `tps`]) =>
+              Type.of[NTEncoded[nmes, tps]]
 
         def listToType[T](ts: List[T])(f: T => Type[?]): Type[?] =
           ts.foldRight(Type.of[EmptyTuple]: Type[?]): (t, acc) =>
