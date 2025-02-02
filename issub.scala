@@ -47,15 +47,25 @@ type NTMir = Substructural.NTEncoded[
 ]
 
 // val p: other.ZipMaskEncoded[NT, NTMir, other.NTParser.MapSub] = true
-val p = other.NTParser.of[NT, NTMir]
-val q1 = p.site.articles.index
-val q2 = p.nav.yesIAmATreeParser
+// val p = other.NTParser.of[NT, NTMir]
+// val q1 = p.site.articles.index
+// val q2 = p.nav.yesIAmATreeParser
 
-val pBreeze = other.NTParser.from[other.SiteThemeProvider.ThemeInMask]()(other.breezeCursor)
-val qBreeze1 = pBreeze.site.yesIAmATreeParser
-val qBreeze2 = pBreeze.nav.yesIAmATreeParser
-val qBreeze3 = pBreeze.extras.extraHead.yesIAmALeaf
-val qBreeze4 = pBreeze.metadata.author.yesIAmALeaf
+def test2 =
+  summon[(x: Int) =:= (x: Int)]
+  summon[(x: Int) <:< (x: Int)]
+  // summon[(x: Int) <:< (x: Int, y: Int)]
+  summon[Substructural[(x: (y: Int)), (x: (y: Int), y: Int)]]
+
+// val pBreeze = other.NTParser.from[other.SiteThemeProvider.ThemeInMask]()(other.breezeCursor)
+// val qBreezeSite = pBreeze.site
+// val qBreeze1 = pBreeze.site.yesIAmATreeParser
+// val qBreeze2 = pBreeze.nav.yesIAmATreeParser
+// val qBreeze3 = pBreeze.extras.extraHead.yesIAmALeaf
+// val qBreeze4 = pBreeze.metadata.author.yesIAmALeaf
+
+// val qFoo = pBreeze.foo("nav").yesIAmATreeParser
+// val qFoo: pBreeze.Fields = (metadata = pBreeze.metadata, site = pBreeze.site, extras = pBreeze.extras, nav = pBreeze.nav)
 
 // val m2: other.IsNTEncoded[NTMir] = true
 //   type Page1to2[T] = T match

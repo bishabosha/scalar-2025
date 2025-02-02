@@ -22,9 +22,9 @@ type DocMap[T] = T match
 type UnliftRef[T] = T match
   case Ref[t] => t
 
-type ZipMaskEncoded[Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror, F[_,_]] <: AnyNamedTuple = (Mask, Encoded) match
+type ZipMaskEncoded[Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror, F[_,_]] = (Mask, Encoded) match
   case (NamedTuple[ns1,vs1],Substructural.NTEncoded[ns2, vs2]) => ZipMaskLoop[ns1, vs1, ns2, vs2, F, EmptyTuple, EmptyTuple]
-  case _ => AnyNamedTuple
+  // case _ => AnyNamedTuple
 
 type ZipMaskLoop[Ns <: Tuple, Vs <: Tuple, ENs <: Tuple, EVs <: Tuple, F[_,_], AccNs <: Tuple, AccVs <: Tuple] <: AnyNamedTuple = (Ns, Vs) match
   case (n *: ns, v *: vs) => ZipLookup[n, v, ENs, EVs, F] match
@@ -33,9 +33,18 @@ type ZipMaskLoop[Ns <: Tuple, Vs <: Tuple, ENs <: Tuple, EVs <: Tuple, F[_,_], A
   case (EmptyTuple, EmptyTuple) => NamedTuple[Tuple.Reverse[AccNs], Tuple.Reverse[AccVs]]
   case _ => AnyNamedTuple
 
-type ZipLookup[N <: Tuple, V <: Tuple, ENs <: Tuple, EVs <: Tuple, F[_,_]] <: Option[Any] = (ENs, EVs) match
-  case (N *: _, v *: _) => Some[F[V, v]]
-  case (_ *: ns, _ *: vs) => ZipLookup[N, V, ns, vs, F]
+// type ZipLookup[N <: Tuple, V <: Tuple, ENs <: Tuple, EVs <: Tuple, F[_,_]] <: Option[Any] = (ENs, EVs) match
+//   case (N *: _, v *: _) => Some[F[V, v]]
+//   case (_ *: ns, _ *: vs) => ZipLookup[N, V, ns, vs, F]
+//   case _ => None.type
+
+type ZipLookup[N, V, ENs <: Tuple, EVs <: Tuple, F[_,_]] <: Option[Any] = Lookup[N, ENs, EVs] match
+  case Some[v] => Some[F[V, v]]
+  case _ => None.type
+
+type Lookup[N, Ns <: Tuple, Vs <: Tuple] <: Option[Any] = (Ns, Vs) match
+  case (N *: _, v *: _) => Some[v]
+  case (_ *: ns, _ *: vs) => Lookup[N, ns, vs]
   case _ => None.type
 
 type IsNTEncoded[Encoded] <: Boolean = Encoded match
@@ -46,37 +55,112 @@ sealed trait NTParserTop
 sealed trait NTParserFields extends NTParserTop with Selectable:
   type Fields <: AnyNamedTuple
 
-sealed trait NTTreeParser[F[_] <: Boolean, Encoded <: Substructural.NTMirror] extends NTParserTop:
+final class NTTreeParser[Ctx <: AnyNamedTuple, F[_] <: Boolean, Encoded <: Substructural.NTMirror] extends NTParserTop:
   def yesIAmATreeParser: Int = 23
   // def mapLeaves[F[_]](f: [T] =>> (t: T) => F[T])
 
-sealed trait NTParserLeaf[T] extends NTParserTop:
+final class NTParserLeaf[T] extends NTParserTop:
   def yesIAmALeaf: Int = 23
 
-final class NTParser[Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror] extends NTParserFields:
-  final type Fields = ZipMaskEncoded[Mask, Encoded, NTParser.MapSub]
-  def selectDynamic(name: String): NTParserTop = ???
+final class NTParser[Ctx <: AnyNamedTuple, Mask <: AnyNamedTuple, Encoded <: Substructural.NTMirror] extends NTParserFields:
+  final type Fields = NTParser.CalcFields[this.type]
+  // transparent inline def selectDynamic(name: String): NTParserTop =
+  //   inline compiletime.erasedValue[NTParser.Select[name.type, Fields]] match
+  //     case _: Some[v] => inline compiletime.erasedValue[v] match
+  //       case _: NTParser[c,m,e] => NTParser[c,m,e]()
+  //       case _: NTParserLeaf[t] => new NTParserLeaf[t]() {}
+  //       case _: NTTreeParser[c,f,e] => new NTTreeParser[c,f,e]() {}
+  //     case _ => compiletime.error("can not select field " + compiletime.constValue[name.type])
+  // def selectDynamic(name: String): NTParserTop = ???
+  // inline def foo(name: String): NTParserTop = selectDynamic(name)
+
+  // inline def selectDynamic[N <: String & Singleton](name: N): NTParserTop = inline compiletime.erasedValue[IsNTEncoded[NTParser.SelectEncoded[N, Encoded]]] match
+  //   case _: true => inline compiletime.erasedValue[NTParser.Select[N, Mask]] match
+  //     case _: NamedTuple[ns, vs] => inline compiletime.erasedValue[Tuple.Head[ns]] match
+  //       case _: Substructural.Keys.IsTreeOf => NTTreeParser()
+  //       case _: String => NTParser()
+  //       // case _ => NTParser()
+  //   case _ => NTParserLeaf()
+
+  // inline given tagLeaf: [N <: String & Singleton] => NTParser.Select[N, ZipMaskEncoded[Mask, Encoded, [M, E] =>> NTParser.MapSub[Ctx, M, E]]] <:< NTParserLeaf[?] => NTParser.Tag[N] =
+  //    NTParser.Tag.Leaf()
+  // inline given tagTree: [N <: String & Singleton] => NTParser.Select[N, ZipMaskEncoded[Mask, Encoded, [M, E] =>> NTParser.MapSub[Ctx, M, E]]] <:< NTTreeParser[?,?,?] => NTParser.Tag[N] =
+  //    NTParser.Tag.Tree()
+  // inline given tagParser: [N <: String & Singleton] => NTParser.Select[N, ZipMaskEncoded[Mask, Encoded, [M, E] =>> NTParser.MapSub[Ctx, M, E]]] <:< NTParser[?,?,?] => NTParser.Tag[N] =
+  //   NTParser.Tag.Node()
+  // given [N <: String & Singleton] => NotGiven[NTParser.Select[N, Fields] <:< AnyNamedTuple] => NTParser.Tag =
+  //   NTParser.Tag.Leaf
+
+
+  inline def selectDynamic[N <: String & Singleton](name: N): NTParserTop =
+    inline compiletime.erasedValue[NTParser.Select[N, NTParser.CalcFields[this.type]]] match
+      case _: NTParser[c,m,e] =>
+        println("parser")
+        new NTParser()
+      case _: NTTreeParser[c,f,e] =>
+        println("tree-parser")
+        new NTTreeParser()
+      case _ =>
+        println("leaf")
+        new NTParserLeaf()
+
 
 type IsNamedTuple[T <: AnyNamedTuple] = T
 
 object NTParser:
-  type MapSub[Mask, Encoded0] <: NTParserTop = IsNTEncoded[Encoded0] match
-    case true => Mask match
-      case NamedTuple[ns, vs] => MapInner[ns, vs, Mask, Encoded0]
-      case _ => Nothing
-    case _ => NTParserLeaf[Encoded0]
 
-  type MapInner[Ns <: Tuple, Vs <: Tuple, Mask <: AnyNamedTuple, Encoded0] <: NTParserTop = Ns match
+  type CalcFields[P] <: AnyNamedTuple = P match
+    case NTParser[ctx, mask, encoded] => ZipMaskEncoded[mask, encoded, [M, E] =>> NTParser.MapSub[ctx, M, E]]
+
+  // enum Tag[N <: String & Singleton]:
+  //   case Leaf()
+  //   case Tree()
+  //   case Node()
+
+  type Select[N <: String, Fields <: AnyNamedTuple] <: Any = Fields match
+    case NamedTuple[ns, vs] => Lookup[N, ns, vs] match
+      case Some[t] => t
+    // case _ => Nothing
+
+  type SelectEncoded[N <: String, Encoded <: Substructural.NTMirror] <: Any = Encoded match
+    case Substructural.NTEncoded[ns, vs] => Lookup[N, ns, vs]  match
+      case Some[t] => t
+    // case _ => Nothing
+    // case _ => None.type
+
+  type Extract[Fields <: AnyNamedTuple] <: (Tuple, Tuple) | Null = Fields match
+    case NamedTuple[ns, vs] => (ns, vs)
+    case _ => Null
+
+  type MapSub[Ctx <: AnyNamedTuple, Mask, Encoded0] <: NTParserTop = IsNTEncoded[Encoded0] match
+    case true => Mask match
+      case NamedTuple[ns, vs] => MapInner[Ctx, ns, vs, Mask, Encoded0]
+      // case _ => Nothing
+    case false => NTParserLeaf[Encoded0]
+
+  type MapSubInt[Mask, Encoded0] <: Int = IsNTEncoded[Encoded0] match
+    case true => Mask match
+      case NamedTuple[ns, vs] => MapInnerInt[ns, vs, Mask, Encoded0]
+      case _ => Nothing
+    case _ => 0
+
+  type MapInnerInt[Ns <: Tuple, Vs <: Tuple, Mask <: AnyNamedTuple, Encoded0] <: Int = Ns match
     case Substructural.Keys.IsTreeOf *: EmptyTuple => Vs match
       case Substructural.Keys.Predicate[f] *: EmptyTuple =>
-        NTTreeParser[f, Encoded0]
-    case _ => NTParser[Mask, Encoded0]
+        1
+    case _ => 2
 
-  def from[Mask <: AnyNamedTuple]()[Ctx <: AnyNamedTuple](c: Cursor[Ctx])(using ev: Substructural.HasRequirements[Mask, Ctx]): NTParser[Mask, ev.Encoded] =
-    NTParser[Mask, ev.Encoded]()
+  type MapInner[Ctx <: AnyNamedTuple, Ns <: Tuple, Vs <: Tuple, Mask <: AnyNamedTuple, Encoded0] <: NTParserTop = Ns match
+    case Substructural.Keys.IsTreeOf *: EmptyTuple => Vs match
+      case Substructural.Keys.Predicate[f] *: EmptyTuple =>
+        NTTreeParser[Ctx, f, Encoded0]
+    case _ => NTParser[Ctx, Mask, Encoded0]
 
-  def of[Mask <: AnyNamedTuple, Encoded0 <: Substructural.NTMirror]: NTParser[Mask, Encoded0] =
-    NTParser[Mask, Encoded0]()
+  def from[Mask <: AnyNamedTuple]()[Ctx <: AnyNamedTuple](c: Cursor[Ctx])(using ev: Substructural.HasRequirements[Mask, Ctx]): NTParser[Ctx, Mask, ev.Encoded] =
+    NTParser[Ctx, Mask, ev.Encoded]()
+
+  def of[Mask <: AnyNamedTuple, Encoded0 <: Substructural.NTMirror]: NTParser[AnyNamedTuple, Mask, Encoded0] =
+    NTParser[AnyNamedTuple, Mask, Encoded0]()
 
 sealed trait SiteTheme[T <: AnyNamedTuple]:
   final type Ctx = T
@@ -141,7 +225,7 @@ object SiteThemeProvider:
       site: site0.Out,
       extras: zExtras.Out,
       nav: nav0.Out
-    )](???)
+    )](_.asInstanceOf)
 
 sealed trait Cursor[T] extends Selectable:
   final type Ref = T
@@ -220,7 +304,7 @@ val BreezeTheme =
   )
     .and:
       (
-        nav = (Articles = ref.site.articles.index)
+        nav = (Articles = ref.site.articles.index),
       )
 
 val breezeCursor = Cursor(BreezeTheme)

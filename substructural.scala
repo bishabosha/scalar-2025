@@ -18,6 +18,8 @@ object Sub:
 
   object Substructural:
     sealed trait Z
+    sealed trait Encoded[A <: AnyNamedTuple]
+    type HasEncoded[A <: AnyNamedTuple] = Encoded[A] { type Out <: NTMirror }
 
     object Keys:
       import scala.compiletime.ops.string.+
@@ -63,6 +65,7 @@ object Sub:
 
     object Proof extends NTOp
       with Substructural[NamedTuple.Empty, NamedTuple.Empty]
+      with Encoded[NamedTuple.Empty]
       with Requires[NamedTuple.Empty, NamedTuple.Empty]
       with MapLeaves[NamedTuple.Empty, [_] =>> Any]
       with Compose[NamedTuple.Empty, NamedTuple.Empty]
@@ -77,6 +80,9 @@ object Sub:
 
     transparent inline given provenRequires: [Req <: AnyNamedTuple, T <: AnyNamedTuple] => Substructural.RequirementsOf[Req][T] =
       ${macros.provenRequiresImpl[Req, T]}
+
+    transparent inline given provenHasEncoded: [T <: AnyNamedTuple] => Substructural.HasEncoded[T] =
+      ${macros.provenHasEncodedImpl[T]}
 
     transparent inline given provenLeaf: [A <: AnyNamedTuple, F[_]] => Substructural.MapLeaves[A, F] =
       ${macros.provenLeafImpl[A, F]}
@@ -208,6 +214,13 @@ object Sub:
           case leaf =>
             Right(leaf)
         go(Type.of[T]).left.map(List(_))
+
+      def provenHasEncodedImpl[T <: AnyNamedTuple: Type](using Quotes): Expr[HasEncoded[T]] =
+        NamedTupleRefl.use:
+          encodeNamedTuple[T] match
+            case Right(tpe) => tpe match
+              case '[type encoded <: NTMirror; `encoded`] => '{ Proof.asInstanceOf[HasEncoded[T] { type Out = encoded }] }
+            case Left(errs) => errExpr(errs.mkString("> ", "\n> ", "\n"))
 
       def provenRequiresImpl[Req <: AnyNamedTuple: Type, T <: AnyNamedTuple: Type](using Quotes): Expr[Substructural.RequirementsOf[Req][T]] =
         NamedTupleRefl.use:

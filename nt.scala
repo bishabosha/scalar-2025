@@ -33,6 +33,10 @@ let's explore DSL's for config, data, and scripting, for a more dynamic feel.
 2. typed schema derivation from naked named-tuples
  */
 
+// SArray[(x: Int, y: Int)]
+// =>
+// (Array[Int], Array[Int])
+
 val a =
   (
     foo = ("bar", "baz"),
