@@ -1,4 +1,4 @@
-package other
+package staticsitegenv2
 
 // import staticsitegen.NuConfig.BreezeTheme
 import substructural.Sub.Substructural
@@ -318,10 +318,11 @@ def article(page: Page[Article], ctx: Cursor[themeX.Ctx]): String =
 // perhaps site config is just independent - accepting layouts,
 // input directory? output directory? etc.
 
-def demo =
-  // val finalConfig = BreezeTheme.and:
-  //   (
-  //     layout = LayoutX(article2),
-  //   )
-
-  ???
+def SiteParser[Ctx <: AnyNamedTuple](c: Cursor[Ctx])(using ev: Substructural.HasRequirements[SiteThemeProvider.ThemeInMask, Ctx]) =
+  val pBreeze = NTParser[Ctx, SiteThemeProvider.ThemeInMask, ev.Encoded]()
+  val qBreeze1 = pBreeze.site.yesIAmATreeParser // TODO: tree is not practical - can have a 1 level depth dictionary of submask
+  val qBreeze2 = pBreeze.nav.yesIAmATreeParser
+  val qBreeze3a = pBreeze.extras.extraHead.focus
+  val qBreeze3b = pBreeze.extras.extraFoot.focus
+  val qBreeze4a = pBreeze.metadata.author.focus
+  val qBreeze4b = pBreeze.metadata.name.focus
