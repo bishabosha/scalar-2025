@@ -40,7 +40,6 @@ class Doc[T]
 class Ref[T](names: List[String]) extends Selectable:
   // might need to capture path at the type level, so to be sure the reference corresponds to a path with correct depth
   type Fields = NamedTuple.Map[NamedTuple.From[T], [X] =>> Ref[X]]
-  type Outer = T
   def selectDynamic(name: String): Any =
     Ref(names :+ name) // create a new Ref that captures the path
 

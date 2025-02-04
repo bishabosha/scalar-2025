@@ -1,6 +1,9 @@
 package issub
 
 import substructural.Sub.Substructural
+import other.IsNTEncoded
+import cursor.Cursor
+import staticsitegen.Ref
 
 class Page1[T]
 class Pages1[T]
@@ -56,13 +59,20 @@ def test2 =
   summon[(x: Int) <:< (x: Int)]
   // summon[(x: Int) <:< (x: Int, y: Int)]
   summon[Substructural[(x: (y: Int)), (x: (y: Int), y: Int)]]
+  summon[IsNTEncoded[NTMir] =:= true]
+  summon[IsNTEncoded[Int] =:= false]
 
-// val pBreeze = other.NTParser.from[other.SiteThemeProvider.ThemeInMask]()(other.breezeCursor)
-// val qBreezeSite = pBreeze.site
-// val qBreeze1 = pBreeze.site.yesIAmATreeParser
-// val qBreeze2 = pBreeze.nav.yesIAmATreeParser
-// val qBreeze3 = pBreeze.extras.extraHead.yesIAmALeaf
-// val qBreeze4 = pBreeze.metadata.author.yesIAmALeaf
+import NamedTuple.AnyNamedTuple
+
+def SiteParser[Ctx <: AnyNamedTuple](c: other.Cursor[Ctx])(using ev: Substructural.HasRequirements[other.SiteThemeProvider.ThemeInMask, Ctx]) =
+  val pBreeze = other.NTParser[Ctx, other.SiteThemeProvider.ThemeInMask, ev.Encoded]()
+  val qBreeze1 = pBreeze.site.yesIAmATreeParser // TODO: tree is not practical - can have a 1 level depth dictionary of submask
+  val qBreeze2 = pBreeze.nav.yesIAmATreeParser
+  val qBreeze3a = pBreeze.extras.extraHead.focus
+  val qBreeze3b = pBreeze.extras.extraFoot.focus
+  val qBreeze4a = pBreeze.metadata.author.focus
+  val qBreeze4b = pBreeze.metadata.name.focus
+  // also answer the question of recursion to allow the lookup of everything.
 
 // val qFoo = pBreeze.foo("nav").yesIAmATreeParser
 // val qFoo: pBreeze.Fields = (metadata = pBreeze.metadata, site = pBreeze.site, extras = pBreeze.extras, nav = pBreeze.nav)
@@ -85,3 +95,11 @@ val y1: Substructural[(foo: (bar: 1)), (foo: (bar: Int, qux: String), other: Boo
 
 //   def y3 =
 //     summon[y2.Out =:= (foo: (index: Page2[String], pages: Pages2[String]))]
+
+// def rec[T <: AnyNamedTuple, U <: AnyNamedTuple](f: (rec: Ref[U]) => T)(using util.NotGiven[T =:= AnyNamedTuple])(using T =:= U): T = f(???)
+// val m = rec { (ref: Ref[(foo: (bar: Int))]) =>
+//   (
+//     foo = (bar = 1),
+//     bar = ref.foo.bar
+//   )
+// }

@@ -28,8 +28,10 @@ object Sub:
       sealed trait Predicate[F[_] <: Boolean]
 
       type IsTreeOf = "special.IsTreeOf"
+      type IsExact = "special.IsExact"
 
     type IsTreeOf[F[_] <: Boolean] = Keys.Encoded[Keys.IsTreeOf, Keys.Predicate[F]]
+    type IsExact[T] = Keys.Encoded[Keys.IsExact, T]
 
     sealed trait WrapSub[A <: AnyNamedTuple, F[_]] extends NTOp
     sealed trait WrapSub1[A <: AnyNamedTuple, F[_ <: AnyNamedTuple]] extends NTOp
@@ -241,12 +243,23 @@ object Sub:
             .view
             .map:
               case (field, pred) => pred match
-                case ntOps.NamedTupleSpecData(Left(ntOps.keysRefl.IsTreeOf -> '[Keys.Predicate[fn]])) =>
-                  t(field) match
-                    case '[type in <: AnyNamedTuple; `in`] =>
-                      isNTTreeOf[fn, in]
-                    case _ =>
-                      Left(List("Expected a NamedTuple"))
+                case ntOps.NamedTupleSpecData(Left(specKey -> tpe)) => (specKey -> tpe) match
+                  case (ntOps.keysRefl.IsTreeOf -> '[Keys.Predicate[fn]]) =>
+                    t(field) match
+                      case '[type in <: AnyNamedTuple; `in`] =>
+                        isNTTreeOf[fn, in]
+                      case _ =>
+                        Left(List("Expected a NamedTuple"))
+                  case (ntOps.keysRefl.IsExact -> ntOps.NamedTupleData(expected)) =>
+                    t(field) match
+                      case ntOps.NamedTupleData(subt) =>
+                        if tryMerge(expected, subt) then
+                          Right(())
+                        else
+                          Left(List(s"Expected ${dbg(expected)} to be a subtype of ${dbg(subt)}"))
+                      case _ =>
+                        Left(List("Expected a NamedTuple"))
+                  case _ => Left(List(s"Unknown or incorrect type for spec key $specKey"))
                 case ntOps.NamedTupleSpecData(Right(subreqs)) =>
                   t(field) match
                     case ntOps.NamedTupleData(subt) =>
@@ -320,7 +333,8 @@ object Sub:
 
         object keysRefl:
           val IsTreeOf: String = compiletime.constValue[Keys.IsTreeOf]
-          val specKeys: Set[String] = Set(IsTreeOf)
+          val IsExact: String = compiletime.constValue[Keys.IsExact]
+          val specKeys: Set[String] = Set(IsTreeOf, IsExact)
 
         object NamedTupleData:
           def unapply(tp: Type[?]): Option[Map[String, Type[?]]] = unpackNamedTuple(tp): (nmes, tps) =>
