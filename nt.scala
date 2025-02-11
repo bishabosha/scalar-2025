@@ -92,3 +92,31 @@ val a =
       qux = ("quux", "quuz")
     )
   )
+
+import NamedTuple.withNames
+import scala.deriving.Mirror
+
+// type Person = (name: String, age: Int)
+// val p: Person = ("Alice", 42).withNames[("name", "age")]
+// assert(p(1) == p.age)
+// summon[Mirror.Of[Person]].fromProduct(p.toTuple)
+
+case class City(name: String, population: Int)
+
+val Warsaw: NamedTuple.From[City] = (name = "Warsaw", population = 1_800_000)
+
+class Data[Schema] extends scala.Selectable:
+  type Fields = NamedTuple.Map[NamedTuple.From[Schema], Data]
+  def selectDynamic(name: String): Data[?] = ???
+object Data:
+  def apply[Schema](s: Schema): Data[Schema] = ???
+
+val p: Data[(name: String, age: Int)] =
+  Data((name = "Alice", age = 42))
+val name: Data[String] = p.name
+val age: Data[Int] = p.age
+
+case class City(name: String, population: Int, ...)
+val c: Expr[City] = ??? // provided by a query
+val name: Expr[String] = c.name
+val pop: Expr[Int] = c.population
