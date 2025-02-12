@@ -94,6 +94,8 @@ val a =
   )
 
 import NamedTuple.withNames
+import NamedTuple.DropNames
+import NamedTuple.Names
 import scala.deriving.Mirror
 
 // type Person = (name: String, age: Int)
@@ -116,7 +118,13 @@ val p: Data[(name: String, age: Int)] =
 val name: Data[String] = p.name
 val age: Data[Int] = p.age
 
-case class City(name: String, population: Int, ...)
-val c: Expr[City] = ??? // provided by a query
-val name: Expr[String] = c.name
-val pop: Expr[Int] = c.population
+type Select[N <: String, T <: AnyNamedTuple] <: Option[Any] =
+  (Names[T], DropNames[T]) match
+    case (N *: _, v *: _)         => Some[v]
+    case (_ *: ns, _ *: vs)       => Select[N, NamedTuple[ns, vs]]
+    case (EmptyTuple, EmptyTuple) => None.type
+
+def finalDemo =
+  summon[Select["name", (name: String, age: Int)] =:= Some[String]]
+  summon[Select["age", (name: String, age: Int)] =:= Some[Int]]
+  summon[Select["???", (name: String, age: Int)] =:= None.type]
