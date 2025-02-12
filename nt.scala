@@ -118,13 +118,29 @@ val p: Data[(name: String, age: Int)] =
 val name: Data[String] = p.name
 val age: Data[Int] = p.age
 
-type Select[N <: String, T <: AnyNamedTuple] <: Option[Any] =
-  (Names[T], DropNames[T]) match
-    case (N *: _, v *: _)         => Some[v]
-    case (_ *: ns, _ *: vs)       => Select[N, NamedTuple[ns, vs]]
-    case (EmptyTuple, EmptyTuple) => None.type
+// type Select[N <: String, T <: AnyNamedTuple] <: Option[Any] =
+//   (Names[T], DropNames[T]) match
+//     case (N *: _, v *: _)         => Some[v]
+//     case (_ *: ns, _ *: vs)       => Select[N, NamedTuple[ns, vs]]
+//     case (EmptyTuple, EmptyTuple) => None.type
+type Select[N <: String, T <: AnyNamedTuple] <: Option[Any] = T match
+  case NamedTuple[ns, vs] =>
+    (ns, vs) match
+      case (N *: _, v *: _)         => Some[v]
+      case (_ *: ns, _ *: vs)       => Select[N, NamedTuple[ns, vs]]
+      case (EmptyTuple, EmptyTuple) => None.type
 
 def finalDemo =
   summon[Select["name", (name: String, age: Int)] =:= Some[String]]
   summon[Select["age", (name: String, age: Int)] =:= Some[Int]]
   summon[Select["???", (name: String, age: Int)] =:= None.type]
+
+// scala> val m = summon[scala.deriving.Mirror.Of[(name: String, age: Int)]]
+// val m:
+//   scala.deriving.Mirror.Product{
+//     type MirroredMonoType = (name : String, age : Int);
+//       type MirroredType = (name : String, age : Int);
+//       type MirroredLabel = "NamedTuple";
+//       type MirroredElemTypes = (String, Int);
+//       type MirroredElemLabels = ("name", "age")
+//   } = scala.runtime.TupleMirror@36ce9eaf
