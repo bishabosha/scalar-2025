@@ -7,18 +7,21 @@ import java.net.http.HttpClient.Redirect
 import java.net.http.HttpResponse
 import java.net.URI
 
-import serverlib.HttpService.Endpoints.Endpoint
-import serverlib.HttpService.Empty
-import serverlib.HttpService.Input
-import serverlib.HttpService.model.source
-import serverlib.HttpService.model.method
+import serverlib.httpservice.HttpService.Endpoints.Endpoint
+import serverlib.httpservice.HttpService.Empty
+import serverlib.httpservice.HttpService.Input
+import serverlib.httpservice.HttpService.model.source
+import serverlib.httpservice.HttpService.model.method
+import serverlib.httpservice.Paths
 
-import PartialRequest.{Request, Bundler, Func}
+import scala.NamedTuple.{AnyNamedTuple, DropNames}
+import PartialRequest.{Request, Bundler}
 
-class PartialRequest[I <: Tuple, E, O] private (
+class PartialRequest[I <: AnyNamedTuple, E, O](
     e: Endpoint[I, E, O],
     baseURI: String,
-    builder: HttpRequest.Builder):
+    builder: HttpRequest.Builder
+)(using Bundler[I]):
 
   private val optBody: Option[IArray[String] => String] =
     e.inputs.view
@@ -38,18 +41,18 @@ class PartialRequest[I <: Tuple, E, O] private (
           (label, i)
         })
         .toMap
-    Server
+    Paths
       .uriPattern(route)
       .map({
-        case Server.UriParts.Exact(str) => Function.const(str)
-        case Server.UriParts.Wildcard(name) =>
+        case Paths.UriParts.Exact(str) => Function.const(str)
+        case Paths.UriParts.Wildcard(name) =>
           val i = uriParams(name)
           bundle => bundle(i)
       })
   end uriParts
 
   protected def handle(bundle: IArray[String]): Request[E, O] =
-    val uri     = uriParts.view.map(_(bundle)).mkString(baseURI, "/", "")
+    val uri = uriParts.view.map(_(bundle)).mkString(baseURI, "/", "")
     val withUri = builder.uri(URI.create(uri))
     val withBody = optBody.fold(withUri)(get =>
       val body = get(bundle)
@@ -61,7 +64,7 @@ class PartialRequest[I <: Tuple, E, O] private (
     Request(withBody.build())
   end handle
 
-  inline def prepare: Func[I, Request[E, O]] = summon[Bundler[I, E, O]].bundle(this)
+  def prepare(input: I): Request[E, O] = handle(summon[Bundler[I]].bundle(input))
 end PartialRequest
 
 object PartialRequest:
@@ -72,7 +75,7 @@ object PartialRequest:
 
     def sendWithError()(using Des[E], Des[O]): Either[E, O] =
       val response = baseSend
-      val body     = response.body()
+      val body = response.body()
       if response.statusCode() < 400 then Right(summon[Des[O]].deserialize(body))
       else Left(summon[Des[E]].deserialize(body))
     end sendWithError
@@ -92,17 +95,12 @@ object PartialRequest:
       case _        => sendWithError()
   end Request
 
-  type Func[I <: Tuple, O] = I match
-    case EmptyTuple      => () => O
-    case a *: EmptyTuple => a => O
-    case (a, b)          => (a, b) => O
-
   type Res[E, O] = E match
     case Empty => O
     case _     => Either[E, O]
 
-  trait Bundler[I <: Tuple, E, O]:
-    inline def bundle(e: PartialRequest[I, E, O]): Func[I, Request[E, O]]
+  trait Bundler[I <: AnyNamedTuple]:
+    def bundle(i: I): IArray[String]
 
   trait Des[T]:
     def deserialize(s: String): T
@@ -131,23 +129,25 @@ object PartialRequest:
   end Ser
 
   object Bundler:
-    given [I <: Tuple, E, O]: Bundler[I, E, O] with
-      inline def bundle(req: PartialRequest[I, E, O]): Func[I, Request[E, O]] =
-        inline compiletime.erasedValue[I] match
-          case _: EmptyTuple => () => req.handle(IArray.empty)
-          case _: (a *: EmptyTuple) =>
-            (a0: a) => req.handle(IArray(compiletime.summonInline[Ser[a]].serialize(a0)))
-          case _: (a, b) =>
-            (a0: a, a1: b) =>
-              val bundle = IArray(
-                compiletime.summonInline[Ser[a]].serialize(a0),
-                compiletime.summonInline[Ser[b]].serialize(a1)
-              )
-              req.handle(bundle)
-    end given
+    final class NTBundler[I <: AnyNamedTuple](serializers: => Tuple) extends Bundler[I]:
+      lazy val sers = serializers.toIArray.map(_.asInstanceOf[Ser[Any]])
+      def bundle(i: I): IArray[String] = IArray.from(
+        i.asInstanceOf[Tuple]
+          .productIterator
+          .zip(sers.iterator)
+          .map({ case (a, ser) =>
+            ser.serialize(a)
+          })
+      )
+    end NTBundler
+
+    inline given [I <: AnyNamedTuple]: Bundler[I] =
+      NTBundler[I](compiletime.summonAll[Tuple.Map[DropNames[I], Ser]])
+
   end Bundler
 
-  def apply[I <: Tuple, E, O](e: Endpoint[I, E, O], baseURI: String)(using Bundler[I, E, O])
-      : PartialRequest[I, E, O] =
+  inline def apply[I <: AnyNamedTuple, E, O](e: Endpoint[I, E, O], baseURI: String)(using
+      Bundler[I]
+  ): PartialRequest[I, E, O] =
     new PartialRequest(e, s"$baseURI/", HttpRequest.newBuilder())
 end PartialRequest

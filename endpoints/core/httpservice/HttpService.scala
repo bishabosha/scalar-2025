@@ -1,11 +1,11 @@
-package serverlib
+package serverlib.httpservice
 
 import mirrorops.ErrorAnnotation
 import mirrorops.MetaAnnotation
 import mirrorops.Operation
 import mirrorops.OpsMirror
 import mirrorops.VoidType
-import serverlib.HttpService.Endpoints.Endpoint
+import HttpService.Endpoints.Endpoint
 
 import scala.NamedTuple.AnyNamedTuple
 import scala.NamedTuple.NamedTuple
@@ -25,12 +25,16 @@ object HttpService:
     case VoidType => Empty
     case _        => T
 
+  type OperationInLabels[Ns <: Tuple] = Operation { type InputLabels = Ns }
+
   type OpToEndpoint[Op] = Op match
     case OperationIns[ins] =>
       Op match
-        case OperationOut[out] =>
+        case OperationInLabels[inls] =>
           Op match
-            case OperationErr[err] => Endpoint[ins, EncodeError[err], out]
+            case OperationOut[out] =>
+              Op match
+                case OperationErr[err] => Endpoint[NamedTuple[inls, ins], EncodeError[err], out]
 
   inline def derived[T](using m: OpsMirror.Of[T]): HttpService[T] = ${
     ServerMacros.derivedImpl[T]('m)

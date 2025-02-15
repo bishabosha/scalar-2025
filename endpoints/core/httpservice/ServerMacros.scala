@@ -1,4 +1,4 @@
-package serverlib
+package serverlib.httpservice
 
 import scala.quoted.*
 import mirrorops.{OpsMirror, Operation, VoidType}
@@ -28,8 +28,8 @@ object ServerMacros:
                 labels
                   .lazyZip(metas.inputs)
                   .map((l, ms) =>
-                    val method: Option[Expr[model.source]] = ms.collectFirst {
-                      case '{ $p: model.source } => p
+                    val method: Option[Expr[model.source]] = ms.collectFirst { case '{ $p: model.source } =>
+                      p
                     }
                     '{
                       Input(
@@ -47,7 +47,7 @@ object ServerMacros:
 
           route match
             case Some(r) => '{ Route($r, $ins) }
-            case None => report.errorAndAbort(s"got the metadata elems ${metas.base.map(_.show)}")
+            case None    => report.errorAndAbort(s"got the metadata elems ${metas.base.map(_.show)}")
     end extractRoutes
 
     def extractLabels[T: Type]: List[Expr[String]] =
@@ -66,7 +66,7 @@ object ServerMacros:
     def extractRoutePairs = mirror match
       case '{
             $m: OpsMirror.Of[T] {
-              type MirroredOperations      = mirroredOps
+              type MirroredOperations = mirroredOps
               type MirroredOperationLabels = opLabels
             }
           } =>

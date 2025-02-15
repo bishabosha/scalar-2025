@@ -9,55 +9,39 @@ import com.sun.net.httpserver.HttpServer
 import java.util.concurrent.Executors
 import scala.collection.mutable.ListBuffer
 
-import serverlib.HttpService.Empty
-import serverlib.HttpService.Endpoints
-import serverlib.HttpService.Endpoints.Endpoint
+import serverlib.httpservice.HttpService.Empty
+import serverlib.httpservice.HttpService.Endpoints
+import serverlib.httpservice.HttpService.Endpoints.Endpoint
+import serverlib.httpservice.HttpService
+import serverlib.httpservice.HttpService.Route
+import serverlib.httpservice.Paths.*
+
 import scala.util.TupledFunction
 
 import scala.NamedTuple.AnyNamedTuple
 import scala.NamedTuple.NamedTuple
+import scala.NamedTuple.DropNames
 
 import serverlib.util.optional
 import scala.collection.View.Empty
 import mirrorops.OpsMirror
-import serverlib.HttpService
-import serverlib.HttpService.Route
 
 class Server private (private val internal: HttpServer) extends AutoCloseable:
   def close(): Unit = internal.stop(0)
 
 object Server:
 
-  enum UriParts:
-    case Exact(str: String)
-    case Wildcard(name: String)
-
-  def uriPattern(route: String): IndexedSeq[UriParts] =
-    assert(route.startsWith("/"))
-    val parts = route.split("/").view.drop(1)
-    assert(parts.forall(_.nonEmpty))
-    parts.toIndexedSeq.map {
-      case s if s.startsWith("{") && s.endsWith("}") => UriParts.Wildcard(s.slice(1, s.length - 1))
-      case s                                         => UriParts.Exact(s)
-    }
-  end uriPattern
-
   enum HttpMethod:
     case Get, Post, Put
 
   type UriHandler = String => Option[Map[String, String]]
 
-  type Func[I <: Tuple, E, O] = I match
-    case EmptyTuple      => () => Res[E, O]
-    case a *: EmptyTuple => a => Res[E, O]
-    case (a, b)          => (a, b) => Res[E, O]
-
   type Res[E, O] = E match
     case Empty => O
     case _     => Either[E, O]
 
-  trait Exchanger[I <: Tuple, E, O](using Ser[Res[E, O]]):
-    def apply(bundle: Bundle, func: Func[I, E, O]): Ser.Result
+  trait Exchanger[I <: AnyNamedTuple, E, O](using Ser[Res[E, O]]):
+    def apply(bundle: Bundle, func: I => Res[E, O]): Ser.Result
 
   trait Ser[O]:
     def serialize(o: O): Ser.Result
@@ -97,25 +81,22 @@ object Server:
   end Des
 
   object Exchanger:
-    @annotation.nowarn("msg=New anonymous class definition will be duplicated at each inline site")
-    inline given [I <: Tuple, E, O](using Ser[Res[E, O]]): Exchanger[I, E, O] =
-      new Exchanger[I, E, O]:
-        def apply(bundle: Bundle, func: Func[I, E, O]): Ser.Result =
-          val res =
-            inline compiletime.erasedValue[I] match
-              case _: EmptyTuple => func.asInstanceOf[() => Res[E, O]]()
-              case _: (a *: EmptyTuple) =>
-                val dA = compiletime.summonInline[Des[a]]
-                func.asInstanceOf[a => Res[E, O]](dA.deserialize(bundle.arg(0)))
-              case _: (a, b) =>
-                val dA = compiletime.summonInline[Des[a]]
-                val dB = compiletime.summonInline[Des[b]]
-                func.asInstanceOf[(a, b) => Res[E, O]](
-                  dA.deserialize(bundle.arg(0)),
-                  dB.deserialize(bundle.arg(1))
-                )
-          summon[Ser[Res[E, O]]].serialize(res)
-        end apply
+    final class NTExchanger[I <: AnyNamedTuple, E, O](deserializers: => Tuple)(using
+        Ser[Res[E, O]]
+    ) extends Exchanger[I, E, O]:
+      lazy val dess = deserializers.toIArray.map(_.asInstanceOf[Des[Any]]).zipWithIndex
+      def apply(bundle: Bundle, func: I => Res[E, O]): Ser.Result =
+        val i: I = Tuple
+          .fromIArray(
+            dess.map: (d, idx) =>
+              d.deserialize(bundle.arg(idx))
+          )
+          .asInstanceOf[I]
+        summon[Ser[Res[E, O]]].serialize(func(i))
+      end apply
+
+    inline given [I <: AnyNamedTuple, E, O](using Ser[Res[E, O]]): Exchanger[I, E, O] =
+      NTExchanger[I, E, O](compiletime.summonAll[Tuple.Map[DropNames[I], Des]])
   end Exchanger
 
   trait Bundle:
@@ -133,7 +114,7 @@ object Server:
       NamedTuple.Map[
         I,
         [X] =>> X match
-          case Endpoint[ins, err, out] => Func[ins, err, out]
+          case Endpoint[ins, err, out] => (ins => Res[err, out])
       ]
     ]
 
@@ -179,7 +160,8 @@ object Server:
         // consume the full input stream
         val is = exchange.getRequestBody
         try
-          is.readAllBytes().ensuring(_.length == length, "read less bytes than expected")
+          is.readAllBytes()
+            .ensuring(_.length == length, "read less bytes than expected")
         finally
           is.close()
       end readBody
@@ -189,11 +171,13 @@ object Server:
           case None =>
             exchange.sendResponseHeaders(404, -1)
           case Some((handler, params)) =>
-            val length = Option(exchange.getRequestHeaders.getFirst("Content-Length"))
-              .map(_.toInt)
-              .getOrElse(0)
-            val body    = readBody(length)
-            val bodyStr = new String(body, java.nio.charset.StandardCharsets.UTF_8)
+            val length =
+              Option(exchange.getRequestHeaders.getFirst("Content-Length"))
+                .map(_.toInt)
+                .getOrElse(0)
+            val body = readBody(length)
+            val bodyStr =
+              new String(body, java.nio.charset.StandardCharsets.UTF_8)
             println(
               s"matched ${uri} to handler ${handler.debug} with params ${params}\nbody: ${bodyStr}"
             )
@@ -223,14 +207,15 @@ object Server:
     makeExchange(_)
   end rootHandler
 
-  class Handler[I <: Tuple, E, O](
+  class Handler[I <: AnyNamedTuple, E, O](
       routeName: String,
       e: Endpoint[I, E, O],
-      op: Func[I, E, O],
-      exchange: Exchanger[I, E, O]):
-    import serverlib.HttpService.model.*
+      op: I => Res[E, O],
+      exchange: Exchanger[I, E, O]
+  ):
+    import serverlib.httpservice.HttpService.model.*
 
-    type Bundler   = (params: Map[String, String], body: String) => Bundle
+    type Bundler = (params: Map[String, String], body: String) => Bundle
     type BundleArg = (params: Map[String, String], body: String) => String
 
     val template: Bundler =
@@ -257,9 +242,9 @@ object Server:
       uri =>
         optional:
           val uriElems = uri.split("/")
-          val elemsIt  = elems.iterator
-          val uriIt    = uriElems.iterator.filter(_.nonEmpty)
-          var result   = Map.empty[String, String]
+          val elemsIt = elems.iterator
+          val uriIt = uriElems.iterator.filter(_.nonEmpty)
+          var result = Map.empty[String, String]
           while elemsIt.hasNext && uriIt.hasNext do
             elemsIt.next() match
               case UriParts.Exact(str) =>
@@ -288,12 +273,11 @@ object Server:
 
     transparent inline def addEndpoints[Service, I <: AnyNamedTuple](
         e: Endpoints[Service] { type Fields = I }
-      )(impls: HandlerFuncs[I]
-      ): this.type =
+    )(impls: HandlerFuncs[I]): this.type =
       val namesTuple = compiletime.constValueTuple[NamedTuple.Names[I]]
       val exchangers = compiletime.summonAll[HandlerExchangers[I]]
       type N0 <: String
-      type I0 <: Tuple
+      type I0 <: AnyNamedTuple
       type E0
       type O0
       val handles = impls
@@ -304,20 +288,22 @@ object Server:
         .map({ case ((func, name), exchanger) =>
           val endpoint =
             e.selectDynamic(name).asInstanceOf[Endpoint[I0, E0, O0]]
-          val op = func.asInstanceOf[Func[I0, E0, O0]]
+          val op = func.asInstanceOf[I0 => Res[E0, O0]]
           val ex = exchanger.asInstanceOf[Exchanger[I0, E0, O0]]
           Handler(name, endpoint, op, ex)
         })
         .toList
 
       // Log the added handlers for debugging
-      println(s"adding handles ${handles.map(_.debug).mkString("\n> ", "\n> ", "")}")
+      println(
+        s"adding handles ${handles.map(_.debug).mkString("\n> ", "\n> ", "")}"
+      )
       handlers ++= handles
       this
     end addEndpoints
 
     def create(port: Int): Server =
-      val server    = HttpServer.create()
+      val server = HttpServer.create()
       val handlers0 = handlers.toList
       server.bind(new java.net.InetSocketAddress(port), 0)
       val _ = server.createContext("/", rootHandler(handlers0))
