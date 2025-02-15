@@ -63,6 +63,7 @@ object HttpService:
       case get(route: String)
       case post(route: String)
       case put(route: String)
+      case delete(route: String)
 
     enum source extends MetaAnnotation:
       case path()

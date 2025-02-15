@@ -74,7 +74,9 @@ object OpsMirror:
     TypeRepr.of[T] match
       case ConstantType(StringConstant(label)) => label
       case _ =>
-        report.errorAndAbort(s"expected a constant string, got ${TypeRepr.of[T]}")
+        report.errorAndAbort(
+          s"expected a constant string, got ${TypeRepr.of[T]}"
+        )
     end match
   end stringFromType
 
@@ -103,7 +105,7 @@ object OpsMirror:
 
     Type.of[Op] match
       case '[Operation {
-            type Metadata       = metadata
+            type Metadata = metadata
             type InputMetadatas = inputMetadatas
           }] =>
         Metadata(extractMetas[metadata], extractMetass[inputMetadatas])
@@ -114,9 +116,9 @@ object OpsMirror:
   private def reifyImpl[T: Type](using Quotes): Expr[Of[T]] =
     import quotes.reflect.*
 
-    val tpe    = TypeRepr.of[T]
-    val cls    = tpe.classSymbol.get
-    val decls  = cls.declaredMethods
+    val tpe = TypeRepr.of[T]
+    val cls = tpe.classSymbol.get
+    val decls = cls.declaredMethods
     val labels = decls.map(m => ConstantType(StringConstant(m.name)))
 
     def isMeta(annot: Term): Boolean =
@@ -124,10 +126,10 @@ object OpsMirror:
       else if annot.tpe <:< TypeRepr.of[scala.annotation.internal.SourceFile]
       then false
       else
-        report.error(
-          s"annotation ${annot.show} does not extend ${Type.show[MetaAnnotation]}",
-          annot.pos
-        )
+        // report.error(
+        //   s"annotation ${annot.show} does not extend ${Type.show[MetaAnnotation]}",
+        //   annot.pos
+        // )
         false
 
     def encodeMeta(annot: Term): Type[?] =
@@ -152,7 +154,9 @@ object OpsMirror:
       val metaAnnots =
         val annots = method.annotations.filter(isMeta)
         val (errorAnnots, metaAnnots) =
-          annots.partition(annot => annot.tpe <:< TypeRepr.of[ErrorAnnotation[?]])
+          annots.partition(annot =>
+            annot.tpe <:< TypeRepr.of[ErrorAnnotation[?]]
+          )
         if errorAnnots.nonEmpty then
           errorAnnots.foreach: annot =>
             report.error(
@@ -169,19 +173,26 @@ object OpsMirror:
             val output = res.asType
             (Nil, Nil, Nil, output)
           case MethodType(paramNames, paramTpes, res) =>
-            val inputTypes  = paramTpes.map(_.asType)
-            val inputLabels = paramNames.map(l => ConstantType(StringConstant(l)).asType)
+            val inputTypes = paramTpes.map(_.asType)
+            val inputLabels =
+              paramNames.map(l => ConstantType(StringConstant(l)).asType)
             val inputMetas = method.paramSymss.head.map: s =>
               typesToTuple(s.annotations.filter(isMeta).map(encodeMeta))
             val output = res match
               case _: MethodType =>
-                report.errorAndAbort(s"curried method ${method.name} is not supported")
+                report.errorAndAbort(
+                  s"curried method ${method.name} is not supported"
+                )
               case _: PolyType =>
-                report.errorAndAbort(s"curried method ${method.name} is not supported")
+                report.errorAndAbort(
+                  s"curried method ${method.name} is not supported"
+                )
               case _ => res.asType
             (inputTypes, inputLabels, inputMetas, output)
           case _: PolyType =>
-            report.errorAndAbort(s"generic method ${method.name} is not supported")
+            report.errorAndAbort(
+              s"generic method ${method.name} is not supported"
+            )
       val inTup = typesToTuple(inputTypes)
       val inLab = typesToTuple(inputLabels)
       val inMet = typesToTuple(inputMetas)
@@ -189,32 +200,32 @@ object OpsMirror:
         case ('[m], '[i], '[l], '[iM], '[e], '[o]) =>
           Type.of[
             Operation {
-              type Metadata       = m
-              type InputTypes     = i
-              type InputLabels    = l
+              type Metadata = m
+              type InputTypes = i
+              type InputLabels = l
               type InputMetadatas = iM
-              type ErrorType      = e
-              type OutputType     = o
+              type ErrorType = e
+              type OutputType = o
             }
           ]
       end match
     )
-    val clsMeta   = typesToTuple(gmeta)
-    val opsTup    = typesToTuple(ops.toList)
+    val clsMeta = typesToTuple(gmeta)
+    val opsTup = typesToTuple(ops.toList)
     val labelsTup = typesToTuple(labels.map(_.asType))
-    val name      = ConstantType(StringConstant(cls.name)).asType
+    val name = ConstantType(StringConstant(cls.name)).asType
     (clsMeta, opsTup, labelsTup, name) match
       case ('[meta], '[ops], '[labels], '[label]) =>
         '{
           (new OpsMirror:
-            type Metadata                = meta & Tuple
-            type MirroredType            = T
-            type MirroredLabel           = label
-            type MirroredOperations      = ops & Tuple
+            type Metadata = meta & Tuple
+            type MirroredType = T
+            type MirroredLabel = label
+            type MirroredOperations = ops & Tuple
             type MirroredOperationLabels = labels & Tuple
           ): OpsMirror.Of[T] {
-            type MirroredLabel           = label
-            type MirroredOperations      = ops & Tuple
+            type MirroredLabel = label
+            type MirroredOperations = ops & Tuple
             type MirroredOperationLabels = labels & Tuple
           }
         }

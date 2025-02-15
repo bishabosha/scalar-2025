@@ -11,42 +11,29 @@ import scala.concurrent.ExecutionContext
 import upickle.default.*
 import upicklex.namedTuples.Macros.Implicits.given
 import example.model.Note
+import serverlib.httpservice.HttpService.Endpoints
+import serverlib.httpservice.HttpService
+import serverlib.fetchhttp.PartialRequest
+import serverlib.fetchhttp.PartialRequest.Des
+
+import utils.given
 
 class HttpClient(using ExecutionContext):
+  private val e = HttpService.endpoints[NoteService]
 
   def getAllNotes(): Future[Seq[Note]] =
-    for
-      resp <- Fetch.fetch("./api/notes").toFuture
-      notes <- resp.to[Seq[Note]]
-    yield notes
+    PartialRequest(e.getAllNotes, "http://localhost:8080")
+      .prepare(NamedTuple.Empty)
+      .send()
 
   def createNote(title: String, content: String): Future[Note] =
-    val request = Request(
-      "./api/notes",
-      new:
-        method = HttpMethod.POST
-        headers = js.Dictionary("Content-Type" -> "application/json")
-        body = write((title = title, content = content))
-    )
-    for
-      resp <- Fetch.fetch(request).toFuture
-      note <- resp.to[Note]
-    yield note
+    PartialRequest(e.createNote, "http://localhost:8080")
+      .prepare((body = (title = title, content = content)))
+      .send()
 
   def deleteNote(id: String): Future[Boolean] =
-    val request = Request(
-      s"./api/notes/$id",
-      new:
-        method = HttpMethod.DELETE
-    )
-    for
-      resp <- Fetch.fetch(request).toFuture
-      res <- resp.to[Boolean]
-    yield res
-
-  extension (resp: Response)
-    private def to[T: Reader]: Future[T] =
-      if resp.ok then
-        for json <- resp.text().toFuture
-        yield read[T](json)
-      else Future.failed(new IOException(resp.statusText))
+    PartialRequest(e.deleteNote, "http://localhost:8080")
+      .prepare((id = id))
+      .send()
+      .map(_ => true)
+      .recoverWith(_ => Future.successful(false))
