@@ -32,7 +32,7 @@ class Server private (private val internal: HttpServer) extends AutoCloseable:
 object Server:
 
   enum HttpMethod:
-    case Get, Post, Put
+    case Get, Post, Put, Delete
 
   type UriHandler = String => Option[Map[String, String]]
 
@@ -139,10 +139,11 @@ object Server:
     def makeExchange(exchange: HttpExchange) =
       // get method
       val method = exchange.getRequestMethod match
-        case "GET"  => HttpMethod.Get
-        case "POST" => HttpMethod.Post
-        case "PUT"  => HttpMethod.Put
-        case _      => throw new IllegalArgumentException("Unsupported method")
+        case "GET"    => HttpMethod.Get
+        case "POST"   => HttpMethod.Post
+        case "PUT"    => HttpMethod.Put
+        case "DELETE" => HttpMethod.Delete
+        case _        => throw new IllegalArgumentException("Unsupported method")
 
       // get uri
       val uri = exchange.getRequestURI.getPath()
@@ -257,14 +258,16 @@ object Server:
     end uriHandle
 
     def debug: String = e.route match
-      case method.get(route)  => s"$routeName: GET ${route}"
-      case method.post(route) => s"$routeName: POST ${route}"
-      case method.put(route)  => s"$routeName: PUT ${route}"
+      case method.get(route)    => s"$routeName: GET ${route}"
+      case method.post(route)   => s"$routeName: POST ${route}"
+      case method.put(route)    => s"$routeName: PUT ${route}"
+      case method.delete(route) => s"$routeName: DELETE ${route}"
 
     def route: (HttpMethod, UriHandler) = e.route match
-      case method.get(route)  => (HttpMethod.Get, uriHandle(route))
-      case method.post(route) => (HttpMethod.Post, uriHandle(route))
-      case method.put(route)  => (HttpMethod.Put, uriHandle(route))
+      case method.get(route)    => (HttpMethod.Get, uriHandle(route))
+      case method.post(route)   => (HttpMethod.Post, uriHandle(route))
+      case method.put(route)    => (HttpMethod.Put, uriHandle(route))
+      case method.delete(route) => (HttpMethod.Delete, uriHandle(route))
 
   end Handler
 

@@ -15,25 +15,25 @@ import serverlib.httpservice.HttpService.Endpoints
 import serverlib.httpservice.HttpService
 import serverlib.fetchhttp.PartialRequest
 import serverlib.fetchhttp.PartialRequest.Des
+import serverlib.fetchhttp.Client
 
 import utils.given
 
 class HttpClient(using ExecutionContext):
-  private val e = HttpService.endpoints[NoteService]
+  private val client = Client.ofEndpoints(
+    HttpService.endpoints[NoteService],
+    baseURI = "http://localhost:8080"
+  )
 
   def getAllNotes(): Future[Seq[Note]] =
-    PartialRequest(e.getAllNotes, "http://localhost:8080")
-      .prepare(NamedTuple.Empty)
-      .send()
+    client.getAllNotes.send(NamedTuple.Empty)
 
   def createNote(title: String, content: String): Future[Note] =
-    PartialRequest(e.createNote, "http://localhost:8080")
-      .prepare((body = (title = title, content = content)))
-      .send()
+    client.createNote
+      .send((body = (title = title, content = content)))
 
   def deleteNote(id: String): Future[Boolean] =
-    PartialRequest(e.deleteNote, "http://localhost:8080")
-      .prepare((id = id))
-      .send()
+    client.deleteNote
+      .send((id = id))
       .map(_ => true)
       .recoverWith(_ => Future.successful(false))

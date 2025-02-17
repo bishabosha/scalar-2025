@@ -30,9 +30,10 @@ class PartialRequest[I <: AnyNamedTuple, E, O](
       .collectFirst({ case (source.body(), i) => bundle => bundle(i) })
 
   private val (httpMethod, route) = e.route match
-    case method.get(route)  => ("GET", route)
-    case method.post(route) => ("POST", route)
-    case method.put(route)  => ("PUT", route)
+    case method.get(route)    => ("GET", route)
+    case method.post(route)   => ("POST", route)
+    case method.put(route)    => ("PUT", route)
+    case method.delete(route) => ("DELETE", route)
 
   private val uriParts: Seq[IArray[String] => String] =
     val uriParams: Map[String, Int] =
