@@ -1,8 +1,14 @@
-packageJs:
-	rm -rf ./out
-	mkdir -p ./out
-	scala --power package --js webpage -o ./out/webpage.js
-	cp ./out/webpage.js ./assets/webpage.js
+clean:
+	rm -rf out
 
-serveStatic:
-	static-web-server -p 8081 -d .
+packageWeb:
+	mkdir -p out/resources/assets
+	cp -r ./assets/* ./out/resources/assets
+	cp index.html ./out/resources/index.html
+
+packageJs: packageWeb
+	mkdir -p out/resources/assets
+	scala --power package --js -f webpage -o out/resources/assets/webpage.js
+
+serve:
+	scala run webserver --resource-dir ./out/resources

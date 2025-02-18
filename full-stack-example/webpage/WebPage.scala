@@ -54,5 +54,13 @@ object WebPage:
 
   @main def start: Unit =
     document.body.appendChild(appContainer)
+    println("fetching notes")
+    val ns = service.getAllNotes()
+    ns.andThen {
+      case scala.util.Success(notes) =>
+        notes.foreach(addNote)
+      case scala.util.Failure(e) =>
+        println(s"Failed to fetch notes: $e")
+    }
 
-    for notes <- service.getAllNotes(); note <- notes do addNote(note)
+    // for notes <- service.getAllNotes(); note <- notes do addNote(note)

@@ -134,12 +134,15 @@ class PartialRequest[I <: AnyNamedTuple, E, O](
 
   protected def handle(bundle: IArray[String]): Request[E, O] =
     val uri = uriParts.view.map(_(bundle)).mkString(baseURI, "/", "")
+    println(s"fetching with uri: $uri")
     Request(
       new dom.Request(
         uri,
         new:
           method = httpMethod
-          headers = js.Dictionary("Content-Type" -> "application/json")
+          headers = js.Dictionary(
+            "Content-Type" -> "application/json",
+          )
           body = optBody.fold(js.undefined)(get => get(bundle))
       )
     )
@@ -200,9 +203,7 @@ object PartialRequest:
 
   object Des:
     given Des[String] with
-      def deserialize(s: String): String = s match
-        case s if s.startsWith("\"") && s.endsWith("\"") => s.drop(1).dropRight(1)
-        case _ => throw new IllegalArgumentException(s"Expected json string, got $s")
+      def deserialize(s: String): String = s
     given Des[Int] with
       def deserialize(s: String): Int = s.toInt
 
@@ -212,12 +213,13 @@ object PartialRequest:
       def deserialize(s: String): Empty = ??? // should never be called
   end Des
 
+  // TODO: need a path serializer, separate from body serializer?
   trait Ser[I]:
     def serialize(i: I): String
 
   object Ser:
     given Ser[String] with
-      def serialize(i: String): String = '"' + i + '"'
+      def serialize(i: String): String = i
     given Ser[Int] with
       def serialize(i: Int): String = i.toString
   end Ser

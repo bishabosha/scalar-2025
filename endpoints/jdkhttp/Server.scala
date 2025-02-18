@@ -25,6 +25,8 @@ import scala.NamedTuple.DropNames
 import serverlib.util.optional
 import scala.collection.View.Empty
 import mirrorops.OpsMirror
+import serverlib.httpservice.HttpService.special
+import scala.util.Try
 
 class Server private (private val internal: HttpServer) extends AutoCloseable:
   def close(): Unit = internal.stop(0)
@@ -47,26 +49,35 @@ object Server:
     def serialize(o: O): Ser.Result
 
   object Ser:
-    type Result = Either[Option[Array[Byte]], Option[Array[Byte]]]
+    val jsonKind = "application/json; charset=utf-8"
+    type Side = Option[(String, Array[Byte])]
+    type Result = Either[Side, Side]
 
-    given [E: Ser, O: Ser]: Ser[Either[E, O]] with
+    given [E: Ser, O: Ser] => Ser[Either[E, O]]:
       def serialize(o: Either[E, O]): Result = o.fold(
         e => Left(summon[Ser[E]].serialize(e).merge),
         o => Right(summon[Ser[O]].serialize(o).merge)
       )
     end given
 
-    given Ser[Unit] with
+    given Ser[Unit]:
       def serialize(o: Unit): Result = Right(None)
 
-    given Ser[String] with
+    given Ser[special.Static]:
+      def serialize(o: special.Static): Result = Right(
+        Some(("<INFER>", o.render))
+      )
+
+    given Ser[String]:
       def serialize(o: String): Result = Right(
-        Some(o.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        Some((jsonKind, ('"' + o + '"').getBytes(java.nio.charset.StandardCharsets.UTF_8)))
       )
     end given
 
-    given Ser[Int] with
-      def serialize(o: Int): Result = summon[Ser[String]].serialize(o.toString)
+    given Ser[Int]:
+      def serialize(o: Int): Result = Right(
+        Some((jsonKind, o.toString.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+      )
   end Ser
 
   trait Des[I]:
@@ -136,7 +147,7 @@ object Server:
       .apply: (_, pair) =>
         pair
 
-    def makeExchange(exchange: HttpExchange) =
+    def makeExchange(exchange: HttpExchange): Unit =
       // get method
       val method = exchange.getRequestMethod match
         case "GET"    => HttpMethod.Get
@@ -167,6 +178,14 @@ object Server:
           is.close()
       end readBody
 
+      def readKind(kind: String): String =
+        if kind == "<INFER>" then
+          if uri.endsWith(".html") || uri.endsWith("/") then "text/html; charset=utf-8"
+          else if uri.endsWith(".css") then "text/css; charset=utf-8"
+          else if uri.endsWith(".js") then "application/javascript; charset=utf-8"
+          else "text/plain; charset=utf-8"
+        else kind
+
       try
         handlerOpt match
           case None =>
@@ -183,20 +202,35 @@ object Server:
               s"matched ${uri} to handler ${handler.debug} with params ${params}\nbody: ${bodyStr}"
             )
 
-            handler.exchange(params, bodyStr) match
+            val attempt = Try(handler.exchange(params, bodyStr))
+
+            val res = attempt match
+              case scala.util.Success(value) => value
+              case scala.util.Failure(exception) =>
+                println(s"error: ${exception}")
+                Left(None)
+
+
+            res match
               case Left(errExchange) =>
                 // TODO: in real world you would encode the data type to the error format
                 errExchange match
                   case None =>
+                    println("debug: err no response [500]")
                     exchange.sendResponseHeaders(500, -1)
-                  case Some(response) =>
+                  case Some((kind, response)) =>
+                    println(s"debug: err yes response [500] ${response.length}")
+                    exchange.getResponseHeaders.add("Content-Type", readKind(kind))
                     exchange.sendResponseHeaders(500, response.length)
                     exchange.getResponseBody.write(response)
               case Right(response) =>
                 response match
                   case None =>
+                    println("debug: no response [200]")
                     exchange.sendResponseHeaders(200, -1)
-                  case Some(response) =>
+                  case Some((kind, response)) =>
+                    println(s"debug: yes response [200] ${response.length}")
+                    exchange.getResponseHeaders.add("Content-Type", readKind(kind))
                     exchange.sendResponseHeaders(200, response.length)
                     exchange.getResponseBody.write(response)
             end match

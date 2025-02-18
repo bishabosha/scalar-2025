@@ -20,9 +20,10 @@ import serverlib.fetchhttp.Client
 import utils.given
 
 class HttpClient(using ExecutionContext):
+  // private val e = HttpService.endpoints[NoteService]
   private val client = Client.ofEndpoints(
     HttpService.endpoints[NoteService],
-    baseURI = "http://localhost:8080"
+    baseURI = "http://localhost:8080/"
   )
 
   def getAllNotes(): Future[Seq[Note]] =

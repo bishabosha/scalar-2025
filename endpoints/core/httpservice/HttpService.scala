@@ -9,6 +9,7 @@ import HttpService.Endpoints.Endpoint
 
 import scala.NamedTuple.AnyNamedTuple
 import scala.NamedTuple.NamedTuple
+import scala.NamedTuple.Names
 
 import quoted.*
 
@@ -43,18 +44,34 @@ object HttpService:
   def endpoints[T: {HttpService as m, OpsMirror.Of as om}]: Endpoints[T] {
     type Fields = HttpService.Fields[om.MirroredOperationLabels, om.MirroredOperations]
   } =
-    new Endpoints[T]:
-      type Fields = HttpService.Fields[om.MirroredOperationLabels, om.MirroredOperations]
-      def selectDynamic(name: String): HttpService.Route = m.routes(name)
+    class EndpointsImpl[T, F <: AnyNamedTuple](val routes: Map[String, HttpService.Route]) extends Endpoints[T]:
+      type Fields = F
+      def selectDynamic(name: String): HttpService.Route = routes(name)
+      def ++[U](that: Endpoints[U])(using Tuple.Disjoint[Names[Fields], Names[that.Fields]] =:= true): EndpointsImpl[T & U, NamedTuple.Concat[Fields, that.Fields]] =
+        new EndpointsImpl[T & U, NamedTuple.Concat[Fields, that.Fields]](this.routes ++ that.routes)
+    new EndpointsImpl[T, HttpService.Fields[om.MirroredOperationLabels, om.MirroredOperations]](m.routes)
 
-  trait Endpoints[T] extends Selectable:
+  sealed trait Endpoints[T] extends Selectable:
+    outer =>
+    def routes: Map[String, HttpService.Route]
     type Fields <: AnyNamedTuple
     def selectDynamic(name: String): HttpService.Route
+    def ++[U](that: Endpoints[U])(using Tuple.Disjoint[Names[Fields], Names[that.Fields]] =:= true): Endpoints[T & U] {
+      type Fields = NamedTuple.Concat[outer.Fields, that.Fields]
+    }
+
 
   object Endpoints:
     opaque type Endpoint[I, E, O] <: HttpService.Route = HttpService.Route
 
   sealed trait Empty
+
+  object special:
+    opaque type Static = Array[Byte]
+    object Static:
+      def apply(bytes: Array[Byte]): Static = bytes
+      extension (static: Static)
+        def render: Array[Byte] = static
 
   object model:
     class failsWith[E] extends ErrorAnnotation[E]
