@@ -2,9 +2,14 @@ package ntquery
 
 class NoteSuite extends munit.FunSuite:
   test("basic") {
-    object Note extends Table[(id: String, title: String, content: String)]
+    case object Note extends Table[(id: String, title: String, content: String)]
 
-    Note.insert // todo some way to select specific fields?
-    Note.select // just get all
-    Note.delete.filter(_.id === "1")
+    println:
+      Note.insert.values(
+        (title = "Test Note", content = "This is a test note.")
+      )
+    println:
+      Note.select
+    println:
+      Note.delete.filter(_.id === "1")
   }
