@@ -10,6 +10,9 @@ import example.model.Note
 
 import utils.{fromResource, given}
 import upicklex.namedTuples.Macros.Implicits.given
+import ntquery.DB
+import ntquery.Table
+import ntquery.InMemoryStore
 
 trait StaticService derives HttpService:
   @get("/")
@@ -20,22 +23,33 @@ trait StaticService derives HttpService:
 
 val e = HttpService.endpoints[NoteService] ++ HttpService.endpoints[StaticService]
 
-val notes: collection.mutable.Map[String, Note] = collection.mutable.Map.empty
-def id() = java.util.UUID.randomUUID().toString
+case object Note extends Table[model.Note]
+
+trait Dao(db: DB):
+  def createNote(title: String, content: String): model.Note =
+    db.run(
+      Note.insert.values(
+        (title = title, content = content)
+      )
+    )
+  def getAll(): Seq[model.Note] =
+    db.run(
+      Note.select
+    )
+  def deleteNoteById(id: String): Unit =
+    db.run(
+      Note.delete.filter(_.id === id)
+    )
+
+object NoteDao extends Dao(InMemoryStore())
 
 @main def serve =
   val server = ServerBuilder()
     .addEndpoints(e):
       (
-        createNote = p =>
-          val n = (id = id(), title = p.body.title, content = p.body.content)
-          notes(n.id) = n
-          n
-        ,
-        getAllNotes = _ => notes.values.toList,
-        deleteNote = p =>
-          if notes.contains(p.id) then notes -= p.id
-          else throw new Exception(s"Note not found with id `${p.id}`"),
+        createNote = p => NoteDao.createNote(p.body.title, p.body.content),
+        getAllNotes = _ => NoteDao.getAll(),
+        deleteNote = p => NoteDao.deleteNoteById(p.id),
         index = _ => Static.fromResource("index.html"),
         asset = p => Static.fromResource(s"assets/${p.rest}")
       )

@@ -6,6 +6,7 @@ import NamedTuple.{NamedTuple, AnyNamedTuple, Names, DropNames}
 import Tuple.IsMappedBy
 import Utils.*
 import ntquery.DeleteQuery.Filtered
+import scala.annotation.targetName
 
 trait Table[T: TableSchema] extends Product:
   final def schema: TableSchema[T] = summon[TableSchema[T]]
@@ -149,11 +150,10 @@ type RunResult[T, IsScalar] = IsScalar match
   case false => Seq[T]
 
 trait DB:
+
   def run[T](q: InsertQuery[T]): T
   def run[T](q: DeleteQuery[T]): Unit
-  def run[T, IsScalar <: Boolean: ValueOf, Res](q: SelectQuery[T, IsScalar])(using
-      RunResult[T, IsScalar] =:= Res
-  ): Res
 
-def transact(f: DB => Unit): Unit =
-  ???
+  @targetName("runSingle")
+  def run[T](q: SelectQuery[T, false]): Seq[T]
+  def run[T](q: SelectQuery[T, true]): T
