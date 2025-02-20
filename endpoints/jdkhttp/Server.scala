@@ -305,48 +305,66 @@ object Server:
 
   end Handler
 
-  class ServerBuilder():
-    private val handlers: ListBuffer[Handler[?, ?, ?]] = ListBuffer()
+  class effestion[Service, I <: AnyNamedTuple](e: Endpoints[Service] { type Fields = I }):
+    type Routes = HandlerFuncs[I]
 
-    transparent inline def addEndpoints[Service, I <: AnyNamedTuple](
-        e: Endpoints[Service] { type Fields = I }
-    )(impls: HandlerFuncs[I]): this.type =
-      val namesTuple = compiletime.constValueTuple[NamedTuple.Names[I]]
-      val exchangers = compiletime.summonAll[HandlerExchangers[I]]
-      type N0 <: String
-      type I0 <: AnyNamedTuple
-      type E0
-      type O0
-      val handles = impls
-        .asInstanceOf[Product]
-        .productIterator
-        .zip(namesTuple.productIterator.asInstanceOf[Iterator[N0]])
-        .zip(exchangers.productIterator)
-        .map({ case ((func, name), exchanger) =>
-          val endpoint =
-            e.selectDynamic(name).asInstanceOf[Endpoint[I0, E0, O0]]
-          val op = func.asInstanceOf[I0 => Res[E0, O0]]
-          val ex = exchanger.asInstanceOf[Exchanger[I0, E0, O0]]
-          Handler(name, endpoint, op, ex)
-        })
-        .toList
+    class Butler(handlers: List[Handler[?, ?, ?]]):
+      def listen(port: Int): Server = ServerBuilder.serve(port, handlers)
 
+    inline def handle(r: Routes): Butler =
+      Butler(ServerBuilder.mkHandlers(e.routes, r))
+  end effestion
+
+  object ServerBuilder:
+    def serve(port: Int, handlers: List[Handler[?, ?, ?]]): Server =
       // Log the added handlers for debugging
       println(
-        s"adding handles ${handles.map(_.debug).mkString("\n> ", "\n> ", "")}"
+        s"adding handles ${handlers.map(_.debug).mkString("\n> ", "\n> ", "")}"
       )
-      handlers ++= handles
-      this
-    end addEndpoints
-
-    def create(port: Int): Server =
       val server = HttpServer.create()
       val handlers0 = handlers.toList
       server.bind(new java.net.InetSocketAddress(port), 0)
       val _ = server.createContext("/", rootHandler(handlers0))
       server.setExecutor(Executors.newVirtualThreadPerTaskExecutor())
       server.start()
+      println("Server started on port " + port)
       Server(server)
-    end create
+
+    def handlersFromTup[I <: AnyNamedTuple](namesTuple: Tuple, exchangers: Tuple, e: Map[String, HttpService.Route], impls: HandlerFuncs[I]): List[Handler[?,?,?]] =
+      type N0 <: String
+      type I0 <: AnyNamedTuple
+      type E0
+      type O0
+      impls
+        .asInstanceOf[Product]
+        .productIterator
+        .zip(namesTuple.productIterator.asInstanceOf[Iterator[N0]])
+        .zip(exchangers.productIterator)
+        .map({ case ((func, name), exchanger) =>
+          val endpoint =
+            e(name).asInstanceOf[Endpoint[I0, E0, O0]]
+          val op = func.asInstanceOf[I0 => Res[E0, O0]]
+          val ex = exchanger.asInstanceOf[Exchanger[I0, E0, O0]]
+          Handler(name, endpoint, op, ex)
+        })
+        .toList
+
+    transparent inline def mkHandlers[I <: AnyNamedTuple](e: Map[String, HttpService.Route], impls: HandlerFuncs[I]): List[Handler[?,?,?]] =
+      val namesTuple = compiletime.constValueTuple[NamedTuple.Names[I]]
+      val exchangers = compiletime.summonAll[HandlerExchangers[I]]
+      handlersFromTup(namesTuple, exchangers, e, impls)
+
+
+  class ServerBuilder():
+    private val handlers: ListBuffer[Handler[?, ?, ?]] = ListBuffer()
+
+    transparent inline def addEndpoints[Service, I <: AnyNamedTuple](
+        e: Endpoints[Service] { type Fields = I }
+    )(impls: HandlerFuncs[I]): this.type =
+      handlers ++= ServerBuilder.mkHandlers(e.routes, impls)
+      this
+    end addEndpoints
+
+    def create(port: Int): Server = ServerBuilder.serve(port, handlers.toList)
   end ServerBuilder
 end Server

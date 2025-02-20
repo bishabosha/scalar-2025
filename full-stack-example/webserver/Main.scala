@@ -1,18 +1,20 @@
 package example
 
+import example.model.Note
+import ntquery.DB
+import ntquery.InMemoryStore
+import ntquery.Table
 import serverlib.httpservice.HttpService
-import serverlib.httpservice.HttpService.special.Static
+import serverlib.httpservice.HttpService.endpoints
 import serverlib.httpservice.HttpService.model.method.get
 import serverlib.httpservice.HttpService.model.source.path
-import serverlib.jdkhttp.Server.ServerBuilder
+import serverlib.httpservice.HttpService.special.Static
 import serverlib.jdkhttp.Server.Ser
-import example.model.Note
+import serverlib.jdkhttp.Server.ServerBuilder
+import serverlib.jdkhttp.Server.effestion
+import upicklex.namedTuples.Macros.Implicits.given
 
 import utils.{fromResource, given}
-import upicklex.namedTuples.Macros.Implicits.given
-import ntquery.DB
-import ntquery.Table
-import ntquery.InMemoryStore
 
 trait StaticService derives HttpService:
   @get("/")
@@ -21,38 +23,33 @@ trait StaticService derives HttpService:
   @get("/assets/{rest}")
   def asset(@path rest: String): Static
 
-val e = HttpService.endpoints[NoteService] ++ HttpService.endpoints[StaticService]
-
 case object Note extends Table[model.Note]
 
-trait Dao(db: DB):
-  def createNote(title: String, content: String): model.Note =
-    db.run(
-      Note.insert.values(
-        (title = title, content = content)
-      )
-    )
-  def getAll(): Seq[model.Note] =
-    db.run(
-      Note.select
-    )
-  def deleteNoteById(id: String): Unit =
-    db.run(
-      Note.delete.filter(_.id === id)
-    )
+val schema = endpoints[StaticService] ++ endpoints[NoteService]
 
-object NoteDao extends Dao(InMemoryStore())
+val app = effestion(schema)
+
+def routes(db: DB): app.Routes = (
+  index = _ => Static.fromResource("index.html"),
+  asset = p => Static.fromResource(s"assets/${p.rest}"),
+  createNote = p =>
+    db.run:
+      Note.insert.values(
+        (title = p.body.title, content = p.body.content)
+      )
+  ,
+  getAllNotes = _ =>
+    db.run:
+      Note.select
+  ,
+  deleteNote = p =>
+    db.run:
+      Note.delete.filter(_.id === p.id)
+)
 
 @main def serve =
-  val server = ServerBuilder()
-    .addEndpoints(e):
-      (
-        createNote = p => NoteDao.createNote(p.body.title, p.body.content),
-        getAllNotes = _ => NoteDao.getAll(),
-        deleteNote = p => NoteDao.deleteNoteById(p.id),
-        index = _ => Static.fromResource("index.html"),
-        asset = p => Static.fromResource(s"assets/${p.rest}")
-      )
-    .create(port = 8080)
+  val server = app
+    .handle(routes(InMemoryStore()))
+    .listen(port = 8080)
 
   sys.addShutdownHook(server.close())
