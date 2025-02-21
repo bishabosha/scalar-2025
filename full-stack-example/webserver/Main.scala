@@ -2,7 +2,7 @@ package example
 
 import example.model.Note
 import ntquery.DB
-import ntquery.InMemoryStore
+import ntquery.LogBasedStore
 import ntquery.Table
 import serverlib.httpservice.HttpService
 import serverlib.httpservice.HttpService.endpoints
@@ -24,6 +24,8 @@ trait StaticService derives HttpService:
   def asset(@path rest: String): Static
 
 case object Note extends Table[model.Note]
+
+val store = LogBasedStore()
 
 val schema = endpoints[StaticService] ++ endpoints[NoteService]
 
@@ -48,8 +50,11 @@ def routes(db: DB): app.Routes = (
 )
 
 @main def serve =
+  store.refreshTables(Note)
   val server = app
-    .handle(routes(InMemoryStore()))
+    .handle(routes(store))
     .listen(port = 8080)
 
-  sys.addShutdownHook(server.close())
+  sys.addShutdownHook:
+    server.close()
+    store.flushLogToDisk()

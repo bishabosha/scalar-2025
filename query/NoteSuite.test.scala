@@ -30,7 +30,7 @@ class NoteSuite extends munit.FunSuite:
           Note.delete.filter(_.id === id)
         )
 
-    val db = InMemoryStore()
+    val db = LogBasedStore()
     object NoteDao extends Dao(db)
 
     assert(db.allRecordCount == 0)
@@ -48,5 +48,28 @@ class NoteSuite extends munit.FunSuite:
     assert(all == Seq(note1))
     assert(db.allRecordCount == 1)
     NoteDao.deleteNoteById(note1.id)
+    assert(db.allRecordCount == 0)
+
+    val log = db.peekLog.mkString("\n")
+    val decoded = log.split("\n").toVector.map(db.decodeEvent)
+
+    assert(db.allRecordCount == 0)
+    assert(decoded.size == 2)
+
+    assert(
+      decoded(0) == db.Event.Insert(
+        "0",
+        db.Data(Note, Map("id" -> "0", "title" -> "test", "content" -> "some content"))
+      )
+    )
+    assert(
+      decoded(1) == db.Event.Delete(
+        "0"
+      )
+    )
+
+    db.runEvent(decoded(0))
+    assert(db.allRecordCount == 1)
+    db.runEvent(decoded(1))
     assert(db.allRecordCount == 0)
   }
