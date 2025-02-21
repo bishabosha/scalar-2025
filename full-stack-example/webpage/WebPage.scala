@@ -36,17 +36,19 @@ def app: HtmlElement =
         )
     )
 
-  def noteElem(note: Note) =
+  def fetchNotesStream() =
+    EventStream.fromFuture(
+      client.getAllNotes.send(NamedTuple.Empty)
+    )
+
+  def noteElem(id: String, note: Signal[Note]) =
     div(
       className := "note",
-      h2(note.title),
-      p(note.content),
+      h2(text <-- note.map(_.title)),
+      p(text <-- note.map(_.content)),
       button(
         "Delete Note",
-        onClick.mapTo((id = note.id)) --> deleteBus.writer
-      ),
-      deletionEvents --> notesVar.updater[String]((ns, id) =>
-        ns.filterNot(_.id == id)
+        onClick.mapTo((id = id)) --> deleteBus.writer
       )
     )
 
@@ -68,8 +70,7 @@ def app: HtmlElement =
         onClick.mapToUnit.compose(
           _.sample(titleInput.signal, contentTextArea.signal)
         ) --> saveClicks.writer
-      ),
-      savedEvents --> notesVar.updater[Note](_ :+ _)
+      )
     )
   end form
 
@@ -77,12 +78,12 @@ def app: HtmlElement =
     idAttr := "app-container",
     h1("My Notepad"),
     form(),
-    children <-- notesVar.signal.map(_.map(noteElem)),
-    onMountBind(_ =>
-      EventStream.fromFuture(
-        client.getAllNotes.send(NamedTuple.Empty)
-      ) --> notesVar.writer
-    )
+    savedEvents --> notesVar.updater[Note](_ :+ _),
+    deletionEvents --> notesVar.updater[String]((ns, id) =>
+      ns.filterNot(_.id == id)
+    ),
+    children <-- notesVar.signal.split(_.id)((id, _, sig) => noteElem(id, sig)),
+    onMountBind(_ => fetchNotesStream() --> notesVar.writer)
   )
 end app
 
