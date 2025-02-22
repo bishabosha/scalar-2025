@@ -1,4 +1,4 @@
-package example
+package serverlib.jdkhttp.upicklex
 
 import upickle.default.*
 import serverlib.jdkhttp.Server.Ser
@@ -7,19 +7,7 @@ import serverlib.jdkhttp.Server.Des
 import java.nio.charset.StandardCharsets
 import scala.util.NotGiven
 
-object utils:
-  // todo: move to another library
-
-  extension (s: Static.type)
-    def fromResource(name: String): Static =
-      Static(
-        Option(
-          Thread.currentThread().getContextClassLoader().getResourceAsStream(name)
-        ).map(_.readAllBytes()).getOrElse(
-          Array.empty
-        )
-      )
-
+object SerDes:
   given [T: Reader] => NotGiven[T =:= String] => Des[T]:
     def deserialize(s: String): T = read[T](s)
 

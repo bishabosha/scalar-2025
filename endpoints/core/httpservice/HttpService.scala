@@ -70,6 +70,15 @@ object HttpService:
     opaque type Static = Array[Byte]
     object Static:
       def apply(bytes: Array[Byte]): Static = bytes
+
+      def fromResource(name: String): Static =
+        Static(
+          Option(
+            Thread.currentThread().getContextClassLoader().getResourceAsStream(name)
+          ).map(_.readAllBytes()).getOrElse(
+            Array.empty
+          )
+        )
       extension (static: Static)
         def render: Array[Byte] = static
 

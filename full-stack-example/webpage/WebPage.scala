@@ -6,10 +6,10 @@ import model.Note
 
 import com.raquo.laminar.api.L.*
 import serverlib.fetchhttp.Client
+import serverlib.fetchhttp.upicklex.SerDes.given
 import serverlib.httpservice.HttpService
 
 import upicklex.namedTuples.Macros.Implicits.given
-import utils.given
 
 val client = Client.ofEndpoints(
   HttpService.endpoints[NoteService],

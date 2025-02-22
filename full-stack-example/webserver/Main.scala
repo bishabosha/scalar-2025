@@ -12,9 +12,9 @@ import serverlib.httpservice.HttpService.special.Static
 import serverlib.jdkhttp.Server.Ser
 import serverlib.jdkhttp.Server.ServerBuilder
 import serverlib.jdkhttp.Server.effestion
+import serverlib.jdkhttp.upicklex.SerDes.given
 import upicklex.namedTuples.Macros.Implicits.given
 
-import utils.{fromResource, given}
 
 trait StaticService derives HttpService:
   @get("/")
