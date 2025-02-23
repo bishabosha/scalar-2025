@@ -5,6 +5,10 @@ import scala.NamedTuple.*
 import scala.Tuple.Disjoint
 import javax.xml.validation.Schema
 
+import substructural.Sub.Substructural
+import scala.util.NotGiven
+import scala.annotation.implicitNotFound
+
 // layout is a function takes a doc page (with a typed front-matter), and a site context,
 //   and returns a concrete html page.
 
@@ -32,7 +36,6 @@ type About = (
 class Layout[T]
 class Docs[Ts]
 class Doc[T]
-// class Refs[T <: AnyNamedTuple, U <: AnyNamedTuple](factory: Ref[T] ?=> U)
 
 class Ref[T](names: List[String]) extends Selectable:
   // might need to capture path at the type level, so to be sure the reference corresponds to a path with correct depth
@@ -40,16 +43,8 @@ class Ref[T](names: List[String]) extends Selectable:
   def selectDynamic(name: String): Any =
     Ref(names :+ name) // create a new Ref that captures the path
 
-// def article: Layout[Article] = ???
-// def articles: Layout[Articles] = ???
-// def about: Layout[About] = ???
-
 def mkref[T <: AnyNamedTuple](t: T): Ref[T] = Ref(Nil)
 def ref[T <: AnyNamedTuple: Ref as ref]: Ref[T] = ref
-// def refs[T <: AnyNamedTuple](using ref: Ref[T])[U <: AnyNamedTuple](
-//     f: Ref[T] ?=> U
-// ): Refs[T, U] = Refs(f)
-
 
 val Breeze = (
   metadata = (
@@ -64,8 +59,10 @@ val Breeze = (
     // Doc is a file of that name, and Docs is a directory of files.
     articles = (index = Doc[Articles], pages = Docs[Article]),
   ),
-  extraHead = Seq.empty,
-  extraFoot = Seq.empty
+  extras = (
+    extraHead = Seq.empty,
+    extraFoot = Seq.empty
+  )
 )
   .and:
     (
@@ -84,8 +81,10 @@ val Breeze2 = (
   site = Breeze.site ++ (
     about = (index = Doc[About])
   ),
-  extraHead = Breeze.extraHead ++ Seq.empty /* include all the goodies */,
-  extraFoot = Breeze.extraFoot ++ Seq.empty /* include all the goodies */
+  extras = (
+    extraHead = Breeze.extras.extraHead ++ Seq.empty,
+    extraFoot = Breeze.extras.extraFoot ++ Seq.empty
+  )
 ).and:
   (
     // important to note here that currently the refs in Breeze.nav have to be resolved dynamically.
@@ -103,11 +102,8 @@ val Breeze2 = (
 
 extension [T <: AnyNamedTuple](t: T)
   def and[U <: AnyNamedTuple](f: Ref[T] ?=> U)(using
-      ev: Tuple.Disjoint[Names[T], Names[U]] =:= true
-  ): NamedTuple.Concat[T, U] =
-    val t1: NamedTuple[Names[T], DropNames[T]] = t.asInstanceOf
-    val u: NamedTuple[Names[U], DropNames[U]] = f(using mkref(t)).asInstanceOf
-    t1 ++ u
+      ev: Substructural.Compose[T, U]
+  ): ev.Out = t ++ f(using mkref(t))
 
 
 object ConfigDSLv1:
@@ -259,13 +255,13 @@ object ConfigDSLv3:
       Disjoint[Names[A], Names[B]] =:= true
 
     final type CanMix[O <: AnyNamedTuple] =
-      IsDisjoint[O, ExtraKeys[Here]]
+      IsDisjoint[O, ExtraOutKeys[Here]]
 
-    final type Z[I <: AnyNamedTuple] = ZoomOps.Zoom[ExtraKeys[Here], I]
+    final type Z[I <: AnyNamedTuple] = ZoomOps.Zoom[ExtraInKeys[Here], I]
     final type MixOut[I <: AnyNamedTuple, O <: AnyNamedTuple] =
-      Concat[O, ExtraKeys[MkOut[I]]]
+      Concat[O, ExtraOutKeys[MkOut[I]]]
     final type MixReq[I <: AnyNamedTuple, F[Schema0 <: AnyNamedTuple] <: AnyNamedTuple] = [Schema <: AnyNamedTuple] =>>
-      Concat[F[Schema], ExtraKeys[MkReq[I, Schema]]]
+      Concat[F[Schema], ExtraInKeys[MkReq[I, Schema]]]
     final type ZMap[I <: AnyNamedTuple, F[T]] <: AnyNamedTuple = Z[I] match
       case NamedTuple[ns, vs] =>
         NamedTuple[ns, Tuple.Map[
@@ -276,7 +272,8 @@ object ConfigDSLv3:
 
     type MkOut[I <: AnyNamedTuple] <: AnyNamedTuple
     type MkReq[I <: AnyNamedTuple, Schema <: AnyNamedTuple] <: AnyNamedTuple
-    type ExtraKeys[Out] <: AnyNamedTuple
+    type ExtraOutKeys[Out] <: AnyNamedTuple
+    type ExtraInKeys[Out] <: AnyNamedTuple
 
     def map[I <: AnyNamedTuple](
         b: ContextBuilder[I]
@@ -284,7 +281,8 @@ object ConfigDSLv3:
   end Plugin
 
   object lookupLayouts extends Plugin:
-    type ExtraKeys[Out] = (layouts: Out)
+    type ExtraInKeys[Out] = (layouts: Out)
+    type ExtraOutKeys[Out] = ExtraInKeys[Out]
 
     override type MkOut[I <: AnyNamedTuple] = ZMap[I, [X] =>> X match
       case Layout[a] => Layout2[a]
@@ -296,28 +294,59 @@ object ConfigDSLv3:
         b: ContextBuilder[I]
     )(using CanMix[b.Output]): ContextBuilder.Aux[I, MixReq[I, b.Reqs], MixOut[I, b.Output]] = ???
 
-  val SiteBuilder = builder(Breeze2)
+  object navPlugin extends Plugin:
+    type ExtraInKeys[Out] = (nav: Out)
+    type ExtraOutKeys[Out] = (nav: Out)
+
+    override type MkOut[I <: AnyNamedTuple] = NamedTuple.Empty
+    override type MkReq[I <: AnyNamedTuple, Schema <: AnyNamedTuple] = ZMap[I, [X] =>> X match
+      case Layout[a] => Layout3[a, Schema]
+    ]
+    def map[I <: AnyNamedTuple](
+        b: ContextBuilder[I]
+    )(using CanMix[b.Output]): ContextBuilder.Aux[I, MixReq[I, b.Reqs], MixOut[I, b.Output]] = ???
+
+  val SiteBuilder = builder(Breeze)
     .plugin(lookupLayouts)
 
-  val SiteCtx2 = SiteBuilder
+  val SiteCtx = SiteBuilder
     .build(
       (
         layouts = (
           article = article2,
           articles = articles2,
+        )
+      )
+    )
+
+  val SiteBuilder2 = builder(Breeze2)
+    .plugin(lookupLayouts)
+
+  val SiteCtx2 = SiteBuilder2
+    .build(
+      (
+        layouts = (
+          article = Layout3(article2).widen,
+          articles = Layout3(articles2).widen,
           about = about2
         )
       )
     )
 
   class Page[T] extends Selectable:
-    type Fields = T
+    type Fields = NamedTuple.From[T]
     def selectDynamic(name: String): Any = ???
 
   class Layout2[T]
 
   trait Layout3[T, Schema <: AnyNamedTuple] extends Layout2[T]:
+    outer =>
     def render(page: Page[T], ctx: Context[Schema]): String
+
+    def widen[Schema2 <: AnyNamedTuple](using Substructural[Schema, Schema2]): Layout3[T, Schema2] =
+      new {
+        def render(page: Page[T], ctx: Context[Schema2]): String = outer.render(page, ctx.asInstanceOf)
+      }.asInstanceOf
 
   object Layout3:
     def apply[T, Schema <: AnyNamedTuple](
@@ -327,158 +356,26 @@ object ConfigDSLv3:
         def render(page: Page[T], ctx: Context[Schema]): String = f(page, ctx)
       }.asInstanceOf
 
-  // TODO: SiteCtx.Context causes a cyclic reference.
-  lazy val article2 = Layout3 { (page: Page[Article], ctx: Context[SiteBuilder.Schema]) =>
+  def article2(page: Page[Article], ctx: Context[SiteBuilder.Schema]): String =
     s"""
     <h1>${page.title}</h1>
     <p>${page.description}</p>
     <p>${page.published}</p>
     <ul>${ctx.layouts.article}</ul>
     """
-  }
 
-  lazy val articles2 = Layout3 { (page: Page[Articles], ctx: Context[SiteBuilder.Schema]) =>
+  def articles2(page: Page[Articles], ctx: Context[SiteBuilder.Schema]) =
     s"""
     <h1>Articles</h1>
     <p>${page.description}</p>
     ${for article <- 1 to 10 yield "??? (TODO: lookup article in ctx)"}
     <ul>${ctx.layouts.article}</ul>
     """
-  }
 
-  lazy val about2 = Layout3 { (page: Page[About], ctx: Context[SiteBuilder.Schema]) =>
+  def about2(page: Page[About], ctx: Context[SiteBuilder2.Schema]) =
     s"""
     <h1>About ${page.name}</h1>
     <p>${page.description}</p>
     """
-  }
 
 end ConfigDSLv3
-
-// type Stuff = (a: (x: Int, y: Int), b: (x: Int, y: Int))
-// val a: Plugin.Zoom[(a: Here), Stuff] = (x = 1, y = 2)
-
-// // val foo = Breeze0.layouts
-// // val m: Plugin.Zoom[(layouts: Here), Breeze0.type] = foo
-
-// class Wrapper[T <: AnyNamedTuple](x: T)
-// object Wrapper:
-//   type Extract[W <: Wrapper[?]] <: AnyNamedTuple = W match
-//     case Wrapper[t] => t
-
-// val Person = (
-//   name = "John",
-//   age = 30
-// )
-
-// type NameExtractor[T <: AnyNamedTuple] = T match
-//   case NamedTuple[ns, vs] => Any // TODO: further refine ns and vs
-//   case _                  => Nothing
-
-// val wrap = Wrapper(Person)
-// val name: NameExtractor[Wrapper.Extract[wrap.type]] = "John"
-
-// val wrap2 = Wrapper(Breeze2)
-// val breeze2Layouts: Plugin.Zoom[(layouts: Here), Wrapper.Extract[wrap2.type]] =
-//   Breeze2.layouts
-
-// object Breeze extends model.Theme:
-
-//   val metadata = new {
-//     val name = "Breeze"
-//     val layouts = Layouts(
-//       article = breeze.articleLayout,
-//       articles = breeze.articles
-//     )
-//   }
-
-//   type Site = model.Site {
-//     val about: Doc
-//     val articles: Docs
-//   }
-
-//   type FrontMatter = model.FrontMatter {
-//     val title: String
-//     val published: String
-//     val startDate: String
-//     val avatar: String
-//     val links: List[String]
-//     val name: String
-//     val copyright: String
-//     val subtitle: String
-//     val url: String
-//     val description: String
-//     val isIndexOnly: Boolean
-//     val isInProgress: Boolean
-//     val ordered: String // a helper to order items
-//   }
-
-//   trait Extra(using Context):
-//     def nav: List[DocCollection] = List(ctx.site.about, ctx.site.articles)
-//     val extraHead: Seq[scalatags.Text.all.Modifier]
-//     val extraFoot: Seq[scalatags.Text.all.Modifier]
-
-//   def extras(using Context, model.Context.InMakeCtx): Extra = new {
-//     val extraHead = Seq.empty
-//     val extraFoot = Seq.empty
-//   }
-
-//   def whoAmI(using Context): String = ctx.site.about.page.frontMatter.name
-//   def copyright(using Context): String =
-//     ctx.site.about.page.frontMatter.copyright
-
-// sealed trait Layouts extends Selectable:
-//   outer =>
-//   type Fields <: AnyNamedTuple
-
-//   def selectDynamic(name: String): Any
-
-//   final def apply[C <: model.Context, D <: DocPage, DC <: DocCollection[D]](
-//       name: String
-//   )(doc: D)(using
-//       C,
-//       DC
-//   ): ConcreteHtmlTag[String] =
-//     val layout =
-//       try selectDynamic(name).asInstanceOf[Layout[C, D]]
-//       catch
-//         case err =>
-//           throw new Exception(
-//             s"Layout not found: `$name` for doc ${summon[DC].collName}.${doc.name}"
-//           )
-//     layout(doc)
-
-//   def ++(additions: Layouts)(using
-//       Layouts.Disjoint[Fields, additions.Fields] =:= true
-//   ): Layouts {
-//     type Fields = NamedTuple.Concat[outer.Fields, additions.Fields]
-//   } = {
-//     val self = this.asInstanceOf[Reified[Names[Fields], DropNames[Fields]]]
-//     val other = additions.asInstanceOf[Reified[Names[
-//       additions.Fields
-//     ], DropNames[additions.Fields]]]
-//     Reified(self.record ++ other.record).asInstanceOf[
-//       Layouts {
-//         type Fields = NamedTuple.Concat[Fields, additions.Fields]
-//       }
-//     ]
-//   }
-
-// object Layouts:
-//   type Disjoint[X <: AnyNamedTuple, Y <: AnyNamedTuple] =
-//     Tuple.Disjoint[Names[X], Names[Y]]
-
-//   type Of[Ns <: Tuple, Vs <: Tuple] = Layouts {
-//     type Fields = NamedTuple[Ns, Vs]
-//   }
-
-//   class Reified[Ns <: Tuple, Vs <: Tuple](record: Map[String, Any])
-//       extends Layouts:
-//     type Fields = NamedTuple[Ns, Vs]
-//     def selectDynamic(name: String): Any =
-//       record(name)
-
-//   inline def apply[Ns <: Tuple, Vs <: Tuple](
-//       ls: NamedTuple[Ns, Vs]
-//   ): Layouts.Of[Ns, Vs] =
-//     Reified(utils.reify(ls))
