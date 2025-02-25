@@ -528,6 +528,9 @@ object customers {
 
     println(df.show())
     println(na.show())
+    val bucketed = na.collectOn[(firstname: ?)].columns[(age: ?)]
+    println(bucketed.keys.show())
+    println(bucketed.get("jamie").get.show())
 }
 
 // TODO: expression with aggregations? look at pola.rs and pokemon dataset
