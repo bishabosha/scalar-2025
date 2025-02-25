@@ -149,11 +149,10 @@ class DataFrame[T](
       : DataFrame[FilterNames[Names[F], T]] =
     val cBuf = IArray.newBuilder[Col[?]]
     val dBuf = IArray.newBuilder[AnyRef]
-    val names = ns.names
-    DataFrame.loop(cols): (col, i) =>
-      if names.contains(col.name) then
-        cBuf += col
-        dBuf += data(i)
+    DataFrame.loop(ns.names): (name, _) =>
+      val i = cols.indexWhere(_.name == name)
+      cBuf += cols(i)
+      dBuf += data(i)
     DataFrame(cBuf.result(), len, dBuf.result())
 
   def merge[U](
@@ -224,7 +223,7 @@ class DataFrame[T](
       case (tag @ given ClassTag[t], i) =>
         val idxToValue = exprFuncs(i).asInstanceOf[Int => t]
         cBuf += Col[t](names(i), isStrict = true, tag, showOf[t](i))
-        dBuf += Array.tabulate(len)(idxToValue)
+        dBuf += Array.tabulate[t](len)(idxToValue)
     DataFrame(cBuf.result(), len, dBuf.result())
 
   def collectOn[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](using
@@ -430,12 +429,11 @@ object DataFrame {
                 val cellIdx = sparse.chain.indexWhere(_.untilIdx > i)
                 sparse.chain(cellIdx).value
         end match
-      case Splice(func, args) =>
-        val compiledArgs = args.map(compile(df, _))
-        i => func(Tuple.fromIArray(compiledArgs.map(_(i))))
+      case Splice(opt, args) =>
+        opt(args.map(compile(df, _)))
 
-  type Func[G] = G match
-    case (g => r) => Tuple.Map[g, Expr] => Expr[r]
+  // type Func[G] = G match
+  //   case (g => r) => Tuple.Map[g, Expr] => Expr[r]
 
   type In[G] <: Tuple = G match
     case (g => _) => g & Tuple
@@ -447,7 +445,34 @@ object DataFrame {
     NamedTuple.Map[T, [X] =>> X match { case Expr[t] => t }]
 
   def fun[F, G](f: F)(using tf: TupledFunction[F, G])(in: Tuple.Map[In[G], Expr]): Expr[Out[G]] =
-    Splice(tf.tupled(f).asInstanceOf[Tuple => Out[G]], in.toIArray.map(_.asInstanceOf[Expr[?]]))
+    val argExprs = in.toIArray.map(_.asInstanceOf[Expr[?]])
+    type Res = Out[G]
+    val opt: (IArray[Int => Any]) => Int => Res = argExprs.length match
+      case 0 =>
+        val f0 = f.asInstanceOf[() => Res]
+        _ => _ => f0()
+      case 1 =>
+        val f1 = f.asInstanceOf[Any => Res]
+        args =>
+          val x1 = args(0)
+          i => f1(x1(i))
+      case 2 =>
+        val f2 = f.asInstanceOf[(Any, Any) => Res]
+        args =>
+          val x1 = args(0)
+          val x2 = args(1)
+          i => f2(x1(i), x2(i))
+      case 3 =>
+        val f3 = f.asInstanceOf[(Any, Any, Any) => Res]
+        args =>
+          val x1 = args(0)
+          val x2 = args(1)
+          val x3 = args(2)
+          i => f3(x1(i), x2(i), x3(i))
+      case _ =>
+        val func = tf.tupled(f).asInstanceOf[Tuple => Res]
+        args => i => func(Tuple.fromIArray(args.map(_(i))))
+    Splice(opt, argExprs)
 
   final case class Ref[T]() extends Selectable:
     type Fields = NamedTuple.Map[NamedTuple.From[T], Expr]
@@ -455,7 +480,8 @@ object DataFrame {
 
   sealed trait Expr[T]
   final case class ColRef[T](name: String) extends Expr[T]
-  final case class Splice[T](func: Tuple => T, args: IArray[Expr[?]]) extends Expr[T]
+  final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?]])
+      extends Expr[T]
 
   def fromCSV[T](
       path: String
@@ -468,22 +494,29 @@ object DataFrame {
     import scala.collection.mutable
     val names = ns.names
     val src = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path)).asScala
-    val header = src.head.split(",")
+
+    // Parse header with quote awareness
+    val header = parseCSVLine(src.head)
     val idxLookup = header.zipWithIndex.toMap
+
     assert(
       names.forall(idxLookup.contains),
       s"missing columns in CSV: ${names.filterNot(idxLookup.contains)}"
     )
     val colIdxs = names.map(idxLookup(_))
+    var len = 0
     val colBufs = ts.tags.map({ case given ClassTag[t] =>
       IArray.newBuilder[t]
     })
 
     for s <- src.dropInPlace(1) do
-      val row0 = IArray.unsafeFromArray(s.split(","))
-      require(row0.length == header.length)
-      val row = colIdxs.map(row0(_))
-      loop(row) { (cell, i) =>
+      val row = parseCSVLine(s)
+      require(
+        row.length == header.length,
+        s"Row has ${row.length} cells, expected ${header.length}"
+      )
+      val selectedCells = colIdxs.map(row(_))
+      loop(selectedCells) { (cell, i) =>
         val parser = ps.parsers(i)
         val parsed = parser.parse(cell)
         ts.tags(i) match
@@ -497,6 +530,78 @@ object DataFrame {
       }
     val data = colBufs.map(_.result().asInstanceOf[AnyRef])
     DataFrame(cols, src.length, data)
+
+  def exploreCSV(
+      path: String
+  ): DataFrame[Any] =
+    import scala.jdk.CollectionConverters.given
+    import scala.collection.mutable
+    val src = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path)).asScala
+
+    // Parse header with quote awareness
+    val header = parseCSVLine(src.head)
+    val idxLookup = header.zipWithIndex.toMap
+
+    val colBufs = header.map(_ => IArray.newBuilder[String])
+
+    for s <- src.dropInPlace(1) do
+      val row = parseCSVLine(s)
+      require(
+        row.length == header.length,
+        s"Row has ${row.length} cells, expected ${header.length}"
+      )
+      loop(row) { (cell, i) =>
+        colBufs(i).addOne(cell)
+      }
+
+    val cols =
+      header.map { name =>
+        Col(name, isStrict = true, reflect.classTag[String], summon[DFShow[String]])
+      }
+    val data = colBufs.map(_.result().asInstanceOf[AnyRef])
+    DataFrame(cols, src.length, data)
+
+  /** Parse a CSV line respecting quoted cells that may contain commas
+    */
+  private def parseCSVLine(line: String): IArray[String] = {
+    import scala.collection.mutable
+    val cells = IArray.newBuilder[String]
+    var i = 0
+    val len = line.length
+    var currentCell = StringBuilder()
+    var insideQuotes = false
+
+    while i < len do
+      val c = line(i)
+
+      if c == '"' then
+        // Check if this is an escaped quote (double quote inside a quoted section)
+        if insideQuotes && i + 1 < len && line(i + 1) == '"' then
+          currentCell += '"'
+          i += 2 // Skip both quote chars
+        else
+          // Toggle quote mode
+          insideQuotes = !insideQuotes
+          i += 1
+        end if
+      else if c == ',' && !insideQuotes then
+        // End of cell
+        cells += currentCell.result()
+        currentCell = StringBuilder()
+        i += 1
+      else
+        // Regular character
+        currentCell += c
+        i += 1
+      end if
+    end while
+
+    // Add the last cell
+    cells += currentCell.result()
+
+    // Convert to IArray
+    cells.result()
+  }
 }
 
 object demo {
@@ -513,12 +618,14 @@ object demo {
 }
 
 object customers {
+  import DataFrame.col
+
   type Customer = (
       id: String,
       firstname: String,
       lastname: String,
       age: Int
-  ) // , City,Country,Phone 1,Phone 2,Email,Subscription Date,Website
+  )
 
   @main def readcustomers(): Unit =
     val df: DataFrame[Customer] =
@@ -531,6 +638,32 @@ object customers {
     val bucketed = na.collectOn[(firstname: ?)].columns[(age: ?)]
     println(bucketed.keys.show())
     println(bucketed.get("jamie").get.show())
+
+    val withDate = df.withComputed:
+      (age_plus_10 = DataFrame.fun((age: Int) => age + 10)(Tuple(col.age)))
+
+    println(withDate.show())
+
+    val withToday = df.withValue((today = LocalDate.now()))
+
+    println(withToday.show())
+
+    val df1: DataFrame[Customer] =
+      DataFrame.fromCSV[Customer]("customers-200.csv")
+
+    val merged = df.merge(df1)
+    println(merged.show())
+
+    val byLast = merged.collectOn[(lastname: ?)].columns[(id: ?, age: ?)]
+    println(byLast.keys.show())
+    println(byLast.get("hampton").get.show())
+
+    val byAge = merged.collectOn[(age: ?)].columns[(age: ?, firstname: ?, lastname: ?)]
+    println(byAge.keys.show())
+    println(byAge.get(31).get.show())
+
+    val reversedColumns = merged.columns[(age: ?, lastname: ?, firstname: ?, id: ?)]
+    println(reversedColumns.show(n = 1))
 }
 
 // TODO: expression with aggregations? look at pola.rs and pokemon dataset
