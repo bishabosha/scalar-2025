@@ -7,38 +7,38 @@ let's explore DSL's for config, data, and scripting, for a more dynamic feel.
  */
 
 /* === Plan ===
-1. show new syntax for named tuples
-  a. type syntax
-  b. value syntax
-2. show new Selectable Fields type member.
-3. DSL for scripting
-  a. advent of code problem
-  b. generate invoice
-  c. codegen
-4. DSL for config
-  a. static website generator
+1. show new syntax for named tuples ✅
+  a. type syntax ✅
+  b. value syntax ✅
+2. show new Selectable Fields type member. ✅
+3. DSL for scripting ✅
+  a. advent of code problem ✅
+  b. generate invoice ✅
+  c. codegen ✅
+4. DSL for config 💭
+  a. static website generator 💭
 5. DSL for data
-  a. json flavors
-  b. data-frame
-  c. sql query
-  d. data-oriented programming
-    aa. array of structs (on/off heap)
-    bb. struct of arrays (on/off heap)
-7. DSL for web servers
-  a. client-call/server-logic for endpoint
+  a. json flavors ✅
+  b. data-frame ✅
+  c. sql query ✅
+  d. data-oriented programming 💭
+    aa. array of structs (on/off heap) 💭
+    bb. struct of arrays (on/off heap) 💭
+7. DSL for web servers ✅
+  a. client-call/server-logic for endpoint ✅
  */
 
 /* === Research work ===
-1. revised ops-mirror based on named tuples
-2. encoding of trees in an array?
-3. basically data frame - SArray[(x: Int, y: Int)] => (Array[Int], Array[Int])
-3. off-heap structs?
-4. typed schema derivation from naked named-tuples
-5. can I hava a basic json dsl for use with sttp?
-  a. with extraction of fields? (like a cursor)
-  b. pattern matching?
-  c. can I implement a simple encoder/decoder?
-6. can I get json working with ops-mirror?
+1. revised ops-mirror based on named tuples ✅
+2. encoding of trees in an array? 💭
+3. basically data frame - SArray[(x: Int, y: Int)] => (Array[Int], Array[Int]) ✅
+3. off-heap structs? 💭
+4. typed schema derivation from naked named-tuples 💭
+5. can I hava a basic json dsl for use with sttp? ✅
+  a. with extraction of fields? (like a cursor) ✅
+  b. pattern matching? ❌
+  c. can I implement a simple encoder/decoder? ✅
+6. can I get json working with ops-mirror? ✅
  */
 
 // type NamedTuple[N <: Tuple, T <: Tuple]
