@@ -1,20 +1,18 @@
 package ntdataframe
 
+import scala.util.Using
+
+import java.nio.file.{Files, Paths}
+
 class DataFrameSuite extends munit.FunSuite:
-  val exampleCSV1 =
-    """id,firstname,lastname,age
-      |abc,fred,hampton,23
-      |def,jamie,thompson,28
-      |ovg,jamie,xx,57
-      |ghi,ada,lovelace,31
-      |mno,grace,kelly,42""".stripMargin
-  val exampleCSV2 =
-    """id,firstname,lastname,age
-      |ixq,gemma,hampton,41
-      |sed,anna,medoc,22
-      |fci,robert,burns,31""".stripMargin
+  def readResource(path: String) =
+    Files.readString(Paths.get(s"testResources/$path"))
+
+  val exampleCSV1 = readResource("customers-100.csv")
+  val exampleCSV2 = readResource("customers-200.csv")
 
   test("explore basic csv"):
+
     val df: DataFrame[Any] = DataFrame.readAnyCSV(exampleCSV1.linesIterator)
     assert(df.len == 5)
     val expectedShow =
