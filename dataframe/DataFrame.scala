@@ -19,10 +19,28 @@ class DataFrame[T](
     private val data: IArray[AnyRef]
 ):
   def columns[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}]
-      : DataFrame[FilterNames[Names[F], T]] =
+      : DataFrame[FilterNames[Names[F], T]] = columnsRaw(ns.names)
+
+  def columns(names: String*)
+      : DataFrame[Any] =
+        val missing = names.filterNot(n => cols.exists(_.name == n))
+        require(
+          missing.isEmpty,
+          s"unknown column: ${missing.mkString(", ")}"
+        )
+        columnsRaw(IArray.from(names))
+
+  def columnLabels: DataFrame[String] =
+    // TODO: introduce series type?
+    val col = Col(name = "label", isStrict = true, reflect.classTag[String], summon[DFShow[String]])
+    val data = cols.map(_.name).asInstanceOf[AnyRef]
+    DataFrame(IArray(col), cols.size, IArray(data))
+
+  private def columnsRaw[U](names: IArray[String])
+      : DataFrame[U] =
     val cBuf = IArray.newBuilder[Col[?]]
     val dBuf = IArray.newBuilder[AnyRef]
-    DataFrame.loop(ns.names): (name, _) =>
+    DataFrame.loop(names): (name, _) =>
       val i = cols.indexWhere(_.name == name)
       cBuf += cols(i)
       dBuf += data(i)
@@ -98,6 +116,7 @@ class DataFrame[T](
         cBuf += Col[t](names(i), isStrict = true, tag, showOf[t](i))
         dBuf += Array.tabulate[t](len)(idxToValue)
     DataFrame(cBuf.result(), len, dBuf.result())
+  end withComputed
 
   def collectOn[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](using
       NamedTuple.Size[F] =:= 1
@@ -177,15 +196,19 @@ class DataFrame[T](
             init = cell.untilIdx
           end while
           packColls(buckets)
+        end if
+    end match
   end collectOn
 
-  def show(n: Int = 10): String = {
+  def show(n: Int = 10): String =
     val sb = new StringBuilder
 
     if (cols.isEmpty) {
       sb ++= "Empty DataFrame"
       return sb.result()
     }
+
+    val shape = s"shape: ($len, ${cols.size})"
 
     val numRows = len
     val dataRows: IndexedSeq[IArray[String]] = (0 until math.min(n, numRows)).map { i =>
@@ -234,15 +257,17 @@ class DataFrame[T](
     val footerLine = "└" + columnWidths.map("─" * _).mkString("┴") + "┘"
 
     // Print the formatted output
-    sb ++= (headerLine) += '\n'
-    sb ++= (header) += '\n'
-    sb ++= (headerSeparator) += '\n'
+    sb ++= shape += '\n'
+    sb ++= headerLine += '\n'
+    sb ++= header += '\n'
+    sb ++= headerSeparator += '\n'
     formattedRows.foreach(sb ++= _ += '\n')
-    sb ++= (footerLine)
+    sb ++= footerLine
     sb.result()
-  }
+  end show
+end DataFrame
 
-object DataFrame {
+object DataFrame:
 
   trait TagsOf[T <: AnyNamedTuple]:
     def tags: IArray[ClassTag[?]]
@@ -254,7 +279,7 @@ object DataFrame {
       val shows = ss.toIArray.map(_.asInstanceOf[DFShow[?]])
 
     transparent inline given [T <: AnyNamedTuple]: TagsOf[T] =
-      new TagsOfNT[T](
+      TagsOfNT[T](
         compiletime.summonAll[Tuple.Map[DropNames[T], ClassTag]],
         compiletime.summonAll[Tuple.Map[DropNames[T], DFShow]]
       )
@@ -371,7 +396,22 @@ object DataFrame {
   final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?]])
       extends Expr[T]
 
-  def fromCSV[T](
+  def readCSV[T](
+      src: IterableOnce[String]
+  )(using
+      ns: NamesOf[NamedTuple.From[T]],
+      ps: ParsersOf[NamedTuple.From[T]],
+      ts: TagsOf[NamedTuple.From[T]]
+  ): DataFrame[T] =
+    readCSVCore(
+      src,
+      Some(ns.names),
+      [T] => ps.parsers(_).asInstanceOf[DFCSVParser[T]],
+      [T] => ts.shows(_).asInstanceOf[DFShow[T]],
+      ts.tags
+    )
+
+  def readCSV[T](
       path: String
   )(using
       ns: NamesOf[NamedTuple.From[T]],
@@ -379,25 +419,66 @@ object DataFrame {
       ts: TagsOf[NamedTuple.From[T]]
   ): DataFrame[T] =
     import scala.jdk.CollectionConverters.given
+    import java.nio.file.{Paths, Files}
+    val s = Files.lines(Paths.get(path))
+    try readCSV[T](s.iterator().asScala)
+    finally s.close()
+
+  def readAnyCSV(
+      src: IterableOnce[String]
+  ): DataFrame[Any] =
+    readCSVCore(src,
+      None,
+      [T] => _ => summon[DFCSVParser[String]].asInstanceOf[DFCSVParser[T]],
+      [T] => _ => summon[DFShow[String]].asInstanceOf[DFShow[T]],
+      _ => reflect.classTag[String]
+    )
+
+  def readAnyCSV(
+      path: String
+  ): DataFrame[Any] =
+    import scala.jdk.CollectionConverters.given
+    import java.nio.file.{Paths, Files}
+    val s = Files.lines(Paths.get(path))
+    try readAnyCSV(s.iterator().asScala)
+    finally s.close()
+
+  private def readCSVCore[T](
+      src: IterableOnce[String],
+      ns: Option[IArray[String]],
+      ps: [T] => Int => DFCSVParser[T],
+      show: [T] => Int => DFShow[T],
+      tag: Int => ClassTag[?]
+  ): DataFrame[T] =
     import scala.collection.mutable
-    val names = ns.names
-    val src = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path)).asScala
+
+    val it = src.iterator
+    if !it.hasNext then return DataFrame(IArray.empty, 0, IArray.empty)
 
     // Parse header with quote awareness
-    val header = parseCSVLine(src.head)
-    val idxLookup = header.zipWithIndex.toMap
+    val header = parseCSVLine(it.next())
+    val colIdxs: IArray[Int] = ns match
+      case Some(names) =>
+        val idxLookup = header.zipWithIndex.toMap
+        assert(
+          names.forall(idxLookup.contains),
+          s"missing columns in CSV: ${names.filterNot(idxLookup.contains)}"
+        )
+        names.map(idxLookup(_))
+      case None =>
+        IArray.from(header.indices)
+    val colNames = colIdxs.map(header)
 
-    assert(
-      names.forall(idxLookup.contains),
-      s"missing columns in CSV: ${names.filterNot(idxLookup.contains)}"
-    )
-    val colIdxs = names.map(idxLookup(_))
     var len = 0
-    val colBufs = ts.tags.map({ case given ClassTag[t] =>
-      IArray.newBuilder[t]
-    })
+    val dBufs = IArray.from(colNames.indices.map( i =>
+      tag(i) match
+        case given ClassTag[t] =>
+          IArray.newBuilder[t]
+    ))
 
-    for s <- src.dropInPlace(1) do
+    while it.hasNext do
+      val s = it.next()
+      len += 1
       val row = parseCSVLine(s)
       require(
         row.length == header.length,
@@ -405,53 +486,25 @@ object DataFrame {
       )
       val selectedCells = colIdxs.map(row(_))
       loop(selectedCells) { (cell, i) =>
-        val parser = ps.parsers(i)
-        val parsed = parser.parse(cell)
-        ts.tags(i) match
+        tag(i) match
           case given ClassTag[t] =>
-            colBufs(i).asInstanceOf[mutable.Builder[t, IArray[t]]].addOne(parsed.asInstanceOf[t])
+            val parser = ps[t](i)
+            val parsed = parser.parse(cell)
+            dBufs(i).asInstanceOf[mutable.Builder[t, IArray[t]]].addOne(parsed.asInstanceOf[t])
       }
 
-    val cols =
-      names.zip(ts.tags).zip(ts.shows).map { case ((name, tag @ given ClassTag[t]), show) =>
-        Col(name, isStrict = true, tag, show.asInstanceOf[DFShow[t]])
-      }
-    val data = colBufs.map(_.result().asInstanceOf[AnyRef])
-    DataFrame(cols, src.length, data)
-
-  def exploreCSV(
-      path: String
-  ): DataFrame[Any] =
-    import scala.jdk.CollectionConverters.given
-    import scala.collection.mutable
-    val src = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(path)).asScala
-
-    // Parse header with quote awareness
-    val header = parseCSVLine(src.head)
-    val idxLookup = header.zipWithIndex.toMap
-
-    val colBufs = header.map(_ => IArray.newBuilder[String])
-
-    for s <- src.dropInPlace(1) do
-      val row = parseCSVLine(s)
-      require(
-        row.length == header.length,
-        s"Row has ${row.length} cells, expected ${header.length}"
-      )
-      loop(row) { (cell, i) =>
-        colBufs(i).addOne(cell)
-      }
-
-    val cols =
-      header.map { name =>
-        Col(name, isStrict = true, reflect.classTag[String], summon[DFShow[String]])
-      }
-    val data = colBufs.map(_.result().asInstanceOf[AnyRef])
-    DataFrame(cols, src.length, data)
+    val cBuf = IArray.newBuilder[Col[?]]
+    loop(colNames): (name, i) =>
+      tag(i) match
+        case tag @ given ClassTag[t] =>
+          cBuf += Col(name, isStrict = true, tag, show[t](i))
+    val data = dBufs.map(_.result().asInstanceOf[AnyRef])
+    DataFrame(cBuf.result(), len, data)
+  end readCSVCore
 
   /** Parse a CSV line respecting quoted cells that may contain commas
     */
-  private def parseCSVLine(line: String): IArray[String] = {
+  private def parseCSVLine(line: String): IArray[String] =
     import scala.collection.mutable
     val cells = IArray.newBuilder[String]
     var i = 0
@@ -489,5 +542,5 @@ object DataFrame {
 
     // Convert to IArray
     cells.result()
-  }
-}
+  end parseCSVLine
+end DataFrame
