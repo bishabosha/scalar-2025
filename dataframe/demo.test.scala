@@ -2,19 +2,6 @@ package ntdataframe
 
 import java.time.LocalDate
 
-object demo {
-  type Session = (duration: Long, pulse: Long, maxPulse: Long, calories: Double)
-
-  val df: DataFrame[Session] =
-    DataFrame.readCSV[Session]("data.csv")
-
-  val d: DataFrame[(duration: Long)] =
-    df.columns[(duration: ?)]
-
-  val pm: DataFrame[(pulse: Long, maxPulse: Long)] =
-    df.columns[(pulse: ?, maxPulse: ?)]
-}
-
 object customers {
   import DataFrame.col
 
@@ -27,7 +14,7 @@ object customers {
 
   @main def readcustomers(): Unit =
     val df: DataFrame[Customer] =
-      DataFrame.readCSV[Customer]("customers-100.csv")
+      DataFrame.readCSV[Customer]("testResources/customers-100.csv")
 
     val na = df.columns[(firstname: ?, age: ?)]
 
@@ -38,7 +25,7 @@ object customers {
     println(bucketed.get("jamie").get.show())
 
     val withDate = df.withComputed:
-      (age_plus_10 = DataFrame.fun((age: Int) => age + 10)(Tuple(col.age)))
+      (age_plus_10 = DataFrame.fun((age: Int) => age + 10)(col.age))
 
     println(withDate.show())
 
@@ -47,7 +34,7 @@ object customers {
     println(withToday.show())
 
     val df1: DataFrame[Customer] =
-      DataFrame.readCSV[Customer]("customers-200.csv")
+      DataFrame.readCSV[Customer]("testResources/customers-200.csv")
 
     val merged = df.merge(df1)
     println(merged.show())
@@ -62,52 +49,4 @@ object customers {
 
     val reversedColumns = merged.columns[(age: ?, lastname: ?, firstname: ?, id: ?)]
     println(reversedColumns.show(n = 1))
-}
-
-// TODO: expression with aggregations? look at pola.rs and pokemon dataset
-
-object bankaccs {
-  import DataFrame.col
-
-  type Hsbc =
-    (id: String, date: LocalDate, kind: String, merchant: String, diff: BigDecimal)
-  type Monzo =
-    (id: String, date: LocalDate, category: String, kind: String, name: String, diff: BigDecimal)
-  type CreditSuisse =
-    (id: String, date: LocalDate, category: String, merchant: String, diff: BigDecimal)
-
-  val hsbc: DataFrame[Hsbc] = ???
-  val monzo: DataFrame[Monzo] = ???
-  val creditsuisse: DataFrame[CreditSuisse] = ???
-
-  type Cols = (acc_kind: ?, id: ?, cat_computed: ?)
-
-  def hsbcCat(kind: String, merchant: String): String = ???
-  def monzoCat(category: String, kind: String, name: String): String = ???
-  def creditsuisseCat(category: String, merchant: String): String = ???
-
-  val all =
-    hsbc
-      .withValue((acc_kind = "hsbc"))
-      .withComputed:
-        (cat_computed = DataFrame.fun(hsbcCat)((col.kind, col.merchant)))
-      .columns[Cols]
-      .merge:
-        monzo
-          .withValue((acc_kind = "monzo"))
-          .withComputed:
-            (cat_computed = DataFrame.fun(monzoCat)((col.category, col.kind, col.name)))
-          .columns[Cols]
-      .merge:
-        creditsuisse
-          .withValue((acc_kind = "creditsuisse"))
-          .withComputed:
-            (cat_computed = DataFrame.fun(creditsuisseCat)((col.category, col.merchant)))
-          .columns[Cols]
-
-  val byKind = all.collectOn[(acc_kind: ?)].columns[(id: ?, cat_computed: ?)]
-  val kinds = byKind.keys
-  val hsbcAgg = byKind.get("hsbc").get
-  val monzoAgg = byKind.get("monzo").get
-  val creditsuisseAgg = byKind.get("creditsuisse").get
 }

@@ -1,5 +1,4 @@
 runtests:
-	scala test --js .
 	scala test .
 
 publishLocal:
