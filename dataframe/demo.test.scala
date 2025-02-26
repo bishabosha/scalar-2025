@@ -6,7 +6,7 @@ object demo {
   type Session = (duration: Long, pulse: Long, maxPulse: Long, calories: Double)
 
   val df: DataFrame[Session] =
-    DataFrame.fromCSV[Session]("data.csv")
+    DataFrame.readCSV[Session]("data.csv")
 
   val d: DataFrame[(duration: Long)] =
     df.columns[(duration: ?)]
@@ -27,7 +27,7 @@ object customers {
 
   @main def readcustomers(): Unit =
     val df: DataFrame[Customer] =
-      DataFrame.fromCSV[Customer]("customers-100.csv")
+      DataFrame.readCSV[Customer]("customers-100.csv")
 
     val na = df.columns[(firstname: ?, age: ?)]
 
@@ -47,7 +47,7 @@ object customers {
     println(withToday.show())
 
     val df1: DataFrame[Customer] =
-      DataFrame.fromCSV[Customer]("customers-200.csv")
+      DataFrame.readCSV[Customer]("customers-200.csv")
 
     val merged = df.merge(df1)
     println(merged.show())
