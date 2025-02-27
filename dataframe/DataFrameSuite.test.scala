@@ -3,6 +3,7 @@ package ntdataframe
 import scala.util.Using
 
 import java.nio.file.{Files, Paths}
+import ntdataframe.DataFrame.SparseArr
 
 class DataFrameSuite extends munit.FunSuite:
   def readResource(path: String) =
@@ -10,6 +11,41 @@ class DataFrameSuite extends munit.FunSuite:
 
   val exampleCSV1 = readResource("customers-100.csv")
   val exampleCSV2 = readResource("customers-200.csv")
+
+  val exampleSparseArr = DataFrame.SparseArr(IArray(10, 20), IArray("abc", "def"))
+
+  test("sparse array length"):
+    assert(exampleSparseArr.size == 20)
+
+  test("sparse array apply"):
+    assert(exampleSparseArr(0) == "abc")
+    assert(exampleSparseArr(9) == "abc")
+    assert(exampleSparseArr(10) == "def")
+    assert(exampleSparseArr(19) == "def")
+    intercept[IndexOutOfBoundsException] {
+      exampleSparseArr(-1)
+    }
+    intercept[IndexOutOfBoundsException] {
+      exampleSparseArr(20)
+    }
+
+  test("sparse array slice single cell"):
+    val sa = exampleSparseArr.slice(0, 1)
+    assert(sa.size == 1, s"${sa.size} != 1")
+    assert(sa(0) == "abc", sa)
+
+  test("sparse array slice multi cell"):
+    val sa = exampleSparseArr.slice(9, 11)
+    assert(sa.size == 2, s"${sa.size} != 2")
+    assert(sa(0) == "abc", sa)
+    assert(sa(1) == "def", sa)
+    val complex = SparseArr(IArray(5, 10, 15, 20), IArray("a", "b", "c", "d"))
+    val cSlice = complex.slice(9, 16)
+    assert(cSlice.size == 7)
+    assert(cSlice(0) == "b")
+    assert(cSlice(1) == "c")
+    assert(cSlice(5) == "c")
+    assert(cSlice(6) == "d")
 
   test("explore basic csv"):
 
