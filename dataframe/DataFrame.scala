@@ -149,26 +149,33 @@ object DataFrame:
 
     def slice(startIdx: Int, untilIdx: Int)(using ClassTag[T]): SparseArr[T] =
       check(self)
-      val len = untilIdx - startIdx
-      var cellIdx0 = -1
-      var cellIdx1 = -1
       val uBuf = IArray.newBuilder[Int]
+      val dBuf = IArray.newBuilder[T]
+      sliceTo(startIdx, untilIdx, 0, uBuf, dBuf)
+      SparseArr(
+        uBuf.result(),
+        dBuf.result()
+      )
+
+    type BuilderOf[T] = scala.collection.mutable.Builder[T, IArray[T]]
+    private[SparseArr] def sliceTo(
+        startIdx: Int,
+        untilIdx: Int,
+        offset: Int,
+        uBuf: BuilderOf[Int],
+        dBuf: BuilderOf[T]
+    )(using ClassTag[T]): Unit =
+      val len = untilIdx - startIdx
       boundary:
         loop(untils): (limit, i) =>
           if limit > startIdx || limit >= untilIdx then
             if limit >= untilIdx then
-              cellIdx1 = i
-              if cellIdx0 == -1 then cellIdx0 = i
-              uBuf += len
+              uBuf += offset + len
+              dBuf += values(i)
               break()
             else
-              if cellIdx0 == -1 then cellIdx0 = i
-              uBuf += (limit - startIdx)
-      assert(cellIdx0 >= 0 && cellIdx1 >= 0, s"invalid slice: $cellIdx0, $cellIdx1")
-      SparseArr(
-        uBuf.result(),
-        values.slice(cellIdx0, cellIdx1 + 1)
-      ).tap(check)
+              uBuf += offset + (limit - startIdx)
+              dBuf += values(i)
 
     override def toString(): String =
       check(self)
@@ -183,6 +190,29 @@ object DataFrame:
       sb ++= ")"
       sb.result()
   end SparseArr
+
+  object SparseArr:
+    class Builder[T: ClassTag](len: Int):
+      private val untils = IArray.newBuilder[Int]
+      private val values = IArray.newBuilder[T]
+      private var init = 0
+
+      // def addAll(sparse: SparseArr[T]): Unit =
+      //   var last = init
+      //   loopRanges(sparse) { (cell, _, until) =>
+      //     untils += init + until
+      //     values += cell
+      //     last = until
+      //   }
+      //   init += last
+
+      def copyFromSparse(sparse: SparseArr[T], from: Int, until: Int): Unit =
+        sparse.sliceTo(from, until, init, untils, values)
+        init += until - from
+
+      def result: SparseArr[T] =
+        assert(init == len, s"expected $len elements, got $init")
+        SparseArr(untils.result(), values.result()).tap(check)
 
   trait Collected[Col <: AnyNamedTuple, T]:
     def keys: DataFrame[Col]
@@ -573,14 +603,13 @@ class DataFrame[T](
                 else
                   val sparse = data(i).asInstanceOf[SparseArr[u]]
                   cBuf += col0
-                  dBuf += (
+                  dBuf += {
                     if vs.isEmpty then SparseArr[K](IArray.empty, IArray.empty)
                     else
-                      vs.map(r => sparse.slice(r.start, r.end))
-                        .reduce[SparseArr[u]]((a, b) =>
-                          SparseArr(a.untils ++ b.untils, a.values ++ b.values)
-                        )
-                  )
+                      val buf = SparseArr.Builder(len)
+                      for r <- vs do buf.copyFromSparse(sparse, r.start, r.end)
+                      buf.result
+                  }
         }
         framesBuf += DataFrame[T](cBuf.result(), len, dBuf.result())
       }
@@ -600,6 +629,7 @@ class DataFrame[T](
         val len = v.size
         val cBuf = IArray.newBuilder[Col[?]]
         val dBuf = IArray.newBuilder[AnyRef]
+        var _vArr: Array[Int] | Null = null
         DataFrame.loop(cols) { (col0, i) =>
           if i == dataIdx then
             cBuf += col0.copy(isDense = false)
@@ -610,7 +640,17 @@ class DataFrame[T](
                 if col0.isDense then
                   val arr = data(i).asInstanceOf[Array[u]]
                   cBuf += col0
-                  dBuf += v.toArray.map(arr)
+                  dBuf += {
+                    val vArr = {
+                      val local = _vArr
+                      if local == null then
+                        val vA = v.toArray
+                        _vArr = vA
+                        vA
+                      else local
+                    }
+                    vArr.map(arr)
+                  }
                 else
                   val sparse = data(i).asInstanceOf[SparseArr[u]]
                   val d0Buf = Array.newBuilder[u]
