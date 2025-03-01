@@ -109,8 +109,8 @@ class DataFrameSuite extends munit.FunSuite:
     val df1: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSVa1.linesIterator)
     val df2: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSVa2.linesIterator)
 
-    val teamA1 = df1.withValue((team = "A"))
-    val teamA2 = df2.withValue((team = "A"))
+    val teamA1 = df1.withValue((team = "M"))
+    val teamA2 = df2.withValue((team = "N"))
 
     val teamA: DataFrame[(id: String, firstname: String, lastname: String, team: String)] =
       teamA1.merge(teamA2)
@@ -119,8 +119,8 @@ class DataFrameSuite extends munit.FunSuite:
         |┌─────┬───────────┬──────────┬──────┐
         |│ id  ┆ firstname ┆ lastname ┆ team │
         |╞═════╪═══════════╪══════════╪══════╡
-        |│ abc ┆ fred      ┆ hampton  ┆ A    │
-        |│ def ┆ jamie     ┆ thompson ┆ A    │
+        |│ abc ┆ fred      ┆ hampton  ┆ M    │
+        |│ def ┆ jamie     ┆ thompson ┆ N    │
         |└─────┴───────────┴──────────┴──────┘""".stripMargin
     assert(teamA.show() == expectedShow, teamA.show())
 

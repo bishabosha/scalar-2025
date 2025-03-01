@@ -20,40 +20,36 @@ object DataFrame:
     val shape = s"shape: (${df.len}, ${df.cols.size})"
 
     val dataRows: IndexedSeq[IArray[String]] =
-      val foo = (0.until(math.min(n, df.len)))
-
-      foo.map(i =>
-        df.cols
-          .zip(df.data)
-          .map: (col, data) =>
-            col.tag match
-              case given ClassTag[t] =>
-                given DFShow[t] = col.dfShow
-                if col.isDense then
-                  val arr = data.asInstanceOf[Array[t]]
-                  arr(i)
-                    .ensuring(_ != null, s"de null at $i, ${col.name}, show: ${col.dfShow}")
-                    .show
-                else
-                  val sparse = data.asInstanceOf[SparseArr[t]]
-                  sparse(i)
-                    .ensuring(_ != null, s"sp null at $i, ${col.name}")
-                    .show
-      )
+      (0 until math.min(n, df.len))
+        .map: i =>
+          df.cols
+            .zip(df.data)
+            .map: (col, data) =>
+              col.tag match
+                case given ClassTag[t] =>
+                  given DFShow[t] = col.dfShow
+                  if col.isDense then
+                    val arr = data.asInstanceOf[Array[t]]
+                    arr(i)
+                      .ensuring(_ != null, s"de null at $i, ${col.name}, show: ${col.dfShow}")
+                      .show
+                  else
+                    val sparse = data.asInstanceOf[SparseArr[t]]
+                    sparse(i)
+                      .ensuring(_ != null, s"sp null at $i, ${col.name}")
+                      .show
 
     // Calculate column widths
-    val columnWidths: Seq[Int] = df.cols.zipWithIndex.map { case (col, index) =>
+    val columnWidths: Seq[Int] = df.cols.zipWithIndex.map: (col, index) =>
       val headerWidth = col.name.length
       val dataWidth = dataRows.map(_(index).length).maxOption.getOrElse(0)
       math.max(headerWidth, dataWidth) + 2 // Add padding
-    }
 
     // Format header
     val header = df.cols
       .zip(columnWidths)
-      .map { case (col, width) =>
+      .map: (col, width) =>
         String.format(s" %-${width - 2}s ", col.name)
-      }
       .mkString("│", "┆", "│")
     val headerLine = "┌" + columnWidths.map("─" * _).mkString("┬") + "┐"
     val headerSeparator = "╞" + columnWidths.map("═" * _).mkString("╪") + "╡"
@@ -61,9 +57,8 @@ object DataFrame:
     val formattedRows = dataRows.map { row =>
       row
         .zip(columnWidths)
-        .map { case (value, width) =>
+        .map: (value, width) =>
           String.format(s" %-${width - 2}s ", value)
-        }
         .mkString("│", "┆", "│")
     }
 
@@ -78,6 +73,7 @@ object DataFrame:
     formattedRows.foreach(sb ++= _ += '\n')
     sb ++= footerLine
     sb.result()
+  end showDF
 
   trait TagsOf[T <: AnyNamedTuple]:
     def tags: IArray[ClassTag[?]]
@@ -213,15 +209,6 @@ object DataFrame:
       private val untils = IArray.newBuilder[Int]
       private val values = IArray.newBuilder[T]
       private var init = 0
-
-      // def addAll(sparse: SparseArr[T]): Unit =
-      //   var last = init
-      //   loopRanges(sparse) { (cell, _, until) =>
-      //     untils += init + until
-      //     values += cell
-      //     last = until
-      //   }
-      //   init += last
 
       def copyFromSparse(sparse: SparseArr[T], from: Int, until: Int): Unit =
         sparse.sliceTo(from, until, init, untils, values)
