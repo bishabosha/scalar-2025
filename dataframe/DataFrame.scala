@@ -31,10 +31,14 @@ object DataFrame:
                 given DFShow[t] = col.dfShow
                 if col.isDense then
                   val arr = data.asInstanceOf[Array[t]]
-                  arr(i).show
+                  arr(i)
+                    .ensuring(_ != null, s"de null at $i, ${col.name}, show: ${col.dfShow}")
+                    .show
                 else
                   val sparse = data.asInstanceOf[SparseArr[t]]
-                  sparse(i).show
+                  sparse(i)
+                    .ensuring(_ != null, s"sp null at $i, ${col.name}")
+                    .show
       )
 
     // Calculate column widths
@@ -114,6 +118,20 @@ object DataFrame:
       init = limit
     end while
 
+  private inline def binarySearch[T](arr: IArray[T])(inline upperBoundedBy: T => Boolean): Int =
+    var low = 0
+    var high = arr.length - 1
+    var result = -1 // Default: not found
+
+    while low <= high do
+      val mid = low + ((high - low) / 2)
+      if upperBoundedBy(arr(mid)) then
+        result = mid
+        high = mid - 1
+      else low = mid + 1
+    result
+  end binarySearch
+
   def check[T](sparse: SparseArr[T]): Unit =
     require(
       sparse.untils.length == sparse.values.length,
@@ -142,8 +160,7 @@ object DataFrame:
 
     def apply(i: Int): T =
       check(self)
-      // TODO: binary search?
-      val cellIdx = untils.indexWhere(_ > i)
+      val cellIdx = binarySearch(untils)(_ > i)
       if i < 0 || cellIdx == -1 then throw IndexOutOfBoundsException(s"index $i out of bounds")
       values(cellIdx)
 
@@ -491,6 +508,7 @@ class DataFrame[T](
     val cBuf = IArray.newBuilder[Col[?]]
     val dBuf = IArray.newBuilder[AnyRef]
     DataFrame.loop(names): (name, _) =>
+      // pre: all names are valid
       val i = cols.indexWhere(_.name == name)
       cBuf += cols(i)
       dBuf += data(i)
@@ -597,7 +615,10 @@ class DataFrame[T](
                   cBuf += col0
                   dBuf += {
                     val col = new Array[u](len)
-                    for r <- vs do arr.copyToArray(col, r.start, r.length)
+                    var idx = 0
+                    for r <- vs do
+                      Array.copy(arr, r.start, col, idx, r.size)
+                      idx += r.size
                     col
                   }
                 else
