@@ -112,7 +112,7 @@ object DataFrame:
       val cell = sparse.values(i)
       var j = init
       while j < limit do
-        f(cell, i)
+        f(cell, j)
         j += 1
       i += 1
       init = limit
@@ -650,7 +650,7 @@ class DataFrame[T](
         val len = v.size
         val cBuf = IArray.newBuilder[Col[?]]
         val dBuf = IArray.newBuilder[AnyRef]
-        var _vArr: Array[Int] | Null = null
+        var vArr: Array[Int] = v.toArray
         DataFrame.loop(cols) { (col0, i) =>
           if i == dataIdx then
             cBuf += col0.copy(isDense = false)
@@ -661,24 +661,11 @@ class DataFrame[T](
                 if col0.isDense then
                   val arr = data(i).asInstanceOf[Array[u]]
                   cBuf += col0
-                  dBuf += {
-                    val vArr = {
-                      val local = _vArr
-                      if local == null then
-                        val vA = v.toArray
-                        _vArr = vA
-                        vA
-                      else local
-                    }
-                    vArr.map(arr)
-                  }
+                  dBuf += vArr.map(arr(_))
                 else
                   val sparse = data(i).asInstanceOf[SparseArr[u]]
-                  val d0Buf = Array.newBuilder[u]
-                  DataFrame.loop(sparse): (cell, j) =>
-                    if v.contains(j) then d0Buf += cell
                   cBuf += col0.copy(isDense = true)
-                  dBuf += d0Buf.result()
+                  dBuf += vArr.map(sparse(_))
         }
         framesBuf += DataFrame[T](cBuf.result(), len, dBuf.result())
       }
