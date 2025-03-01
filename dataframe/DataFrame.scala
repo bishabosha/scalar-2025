@@ -11,6 +11,7 @@ import DataFrame.SparseArr
 import DataFrame.TagsOf
 
 import TupleUtils.*
+import scala.util.boundary, boundary.break
 
 object DataFrame:
 
@@ -19,36 +20,36 @@ object DataFrame:
     val shape = s"shape: (${df.len}, ${df.cols.size})"
 
     val dataRows: IndexedSeq[IArray[String]] =
-      val foo = (0.until(math.min(n, df.len)))
-
-      foo.map(i =>
-        df.cols
-          .zip(df.data)
-          .map: (col, data) =>
-            col.tag match
-              case given ClassTag[t] =>
-                given DFShow[t] = col.dfShow
-                if col.isDense then
-                  val arr = data.asInstanceOf[Array[t]]
-                  arr(i).show
-                else
-                  val sparse = data.asInstanceOf[SparseArr[t]]
-                  sparse(i).show
-      )
+      (0 until math.min(n, df.len))
+        .map: i =>
+          df.cols
+            .zip(df.data)
+            .map: (col, data) =>
+              col.tag match
+                case given ClassTag[t] =>
+                  given DFShow[t] = col.dfShow
+                  if col.isDense then
+                    val arr = data.asInstanceOf[Array[t]]
+                    arr(i)
+                      .ensuring(_ != null, s"de null at $i, ${col.name}, show: ${col.dfShow}")
+                      .show
+                  else
+                    val sparse = data.asInstanceOf[SparseArr[t]]
+                    sparse(i)
+                      .ensuring(_ != null, s"sp null at $i, ${col.name}")
+                      .show
 
     // Calculate column widths
-    val columnWidths: Seq[Int] = df.cols.zipWithIndex.map { case (col, index) =>
+    val columnWidths: Seq[Int] = df.cols.zipWithIndex.map: (col, index) =>
       val headerWidth = col.name.length
       val dataWidth = dataRows.map(_(index).length).maxOption.getOrElse(0)
       math.max(headerWidth, dataWidth) + 2 // Add padding
-    }
 
     // Format header
     val header = df.cols
       .zip(columnWidths)
-      .map { case (col, width) =>
+      .map: (col, width) =>
         String.format(s" %-${width - 2}s ", col.name)
-      }
       .mkString("│", "┆", "│")
     val headerLine = "┌" + columnWidths.map("─" * _).mkString("┬") + "┐"
     val headerSeparator = "╞" + columnWidths.map("═" * _).mkString("╪") + "╡"
@@ -56,9 +57,8 @@ object DataFrame:
     val formattedRows = dataRows.map { row =>
       row
         .zip(columnWidths)
-        .map { case (value, width) =>
+        .map: (value, width) =>
           String.format(s" %-${width - 2}s ", value)
-        }
         .mkString("│", "┆", "│")
     }
 
@@ -73,6 +73,7 @@ object DataFrame:
     formattedRows.foreach(sb ++= _ += '\n')
     sb ++= footerLine
     sb.result()
+  end showDF
 
   trait TagsOf[T <: AnyNamedTuple]:
     def tags: IArray[ClassTag[?]]
@@ -107,18 +108,115 @@ object DataFrame:
       val cell = sparse.values(i)
       var j = init
       while j < limit do
-        f(cell, i)
+        f(cell, j)
         j += 1
+      i += 1
+      init = limit
+    end while
+
+  private inline def binarySearch[T](arr: IArray[T])(inline upperBoundedBy: T => Boolean): Int =
+    var low = 0
+    var high = arr.length - 1
+    var result = -1 // Default: not found
+
+    while low <= high do
+      val mid = low + ((high - low) / 2)
+      if upperBoundedBy(arr(mid)) then
+        result = mid
+        high = mid - 1
+      else low = mid + 1
+    result
+  end binarySearch
+
+  def check[T](sparse: SparseArr[T]): Unit =
+    require(
+      sparse.untils.length == sparse.values.length,
+      s"inconsistent sparse array, untils: ${sparse.untils.length}, values: ${sparse.values.length}"
+    )
+
+  inline def loopRanges[T](sparse: SparseArr[T])(inline f: (T, Int, Int) => Unit): Unit =
+    check(sparse)
+    var init = 0
+    var i = 0
+    val cells = sparse.untils.length
+    while i < cells do
+      val limit = sparse.untils(i)
+      val cell = sparse.values(i)
+      f(cell, init, limit)
+      i += 1
       init = limit
     end while
 
   case class Col[T](name: String, isDense: Boolean, tag: ClassTag[T], dfShow: DFShow[T])
   case class SparseArr[T](untils: IArray[Int], values: IArray[T]):
+    self =>
+    def size: Int =
+      check(self)
+      if untils.isEmpty then 0 else untils.last
+
     def apply(i: Int): T =
-      val cellIdx = untils.indexWhere(_ > i)
+      check(self)
+      val cellIdx = binarySearch(untils)(_ > i)
+      if i < 0 || cellIdx == -1 then throw IndexOutOfBoundsException(s"index $i out of bounds")
       values(cellIdx)
-    def indexOf(value: T): Int =
-      values.indexOf(value)
+
+    def slice(startIdx: Int, untilIdx: Int)(using ClassTag[T]): SparseArr[T] =
+      check(self)
+      val uBuf = IArray.newBuilder[Int]
+      val dBuf = IArray.newBuilder[T]
+      sliceTo(startIdx, untilIdx, 0, uBuf, dBuf)
+      SparseArr(
+        uBuf.result(),
+        dBuf.result()
+      )
+
+    type BuilderOf[T] = scala.collection.mutable.Builder[T, IArray[T]]
+    private[SparseArr] def sliceTo(
+        startIdx: Int,
+        untilIdx: Int,
+        offset: Int,
+        uBuf: BuilderOf[Int],
+        dBuf: BuilderOf[T]
+    )(using ClassTag[T]): Unit =
+      val len = untilIdx - startIdx
+      boundary:
+        loop(untils): (limit, i) =>
+          if limit > startIdx || limit >= untilIdx then
+            if limit >= untilIdx then
+              uBuf += offset + len
+              dBuf += values(i)
+              break()
+            else
+              uBuf += offset + (limit - startIdx)
+              dBuf += values(i)
+
+    override def toString(): String =
+      check(self)
+      val sb = StringBuilder()
+      sb ++= "SparseArr("
+      var seen = 0
+      loopRanges(self) { (cell, from, until) =>
+        if seen > 0 then sb ++= ", "
+        sb ++= s"$cell[$from..<$until]"
+        seen += 1
+      }
+      sb ++= ")"
+      sb.result()
+  end SparseArr
+
+  object SparseArr:
+    class Builder[T: ClassTag](len: Int):
+      private val untils = IArray.newBuilder[Int]
+      private val values = IArray.newBuilder[T]
+      private var init = 0
+
+      def copyFromSparse(sparse: SparseArr[T], from: Int, until: Int): Unit =
+        sparse.sliceTo(from, until, init, untils, values)
+        init += until - from
+
+      def result: SparseArr[T] =
+        assert(init == len, s"expected $len elements, got $init")
+        SparseArr(untils.result(), values.result()).tap(check)
 
   trait Collected[Col <: AnyNamedTuple, T]:
     def keys: DataFrame[Col]
@@ -397,6 +495,7 @@ class DataFrame[T](
     val cBuf = IArray.newBuilder[Col[?]]
     val dBuf = IArray.newBuilder[AnyRef]
     DataFrame.loop(names): (name, _) =>
+      // pre: all names are valid
       val i = cols.indexWhere(_.name == name)
       cBuf += cols(i)
       dBuf += data(i)
@@ -481,6 +580,53 @@ class DataFrame[T](
     val dataIdx = cols.indexWhere(_.name == name)
     val col = cols(dataIdx)
 
+    def packCollsSparse[K: ClassTag, Z <: AnyNamedTuple](
+        buckets: mutable.HashMap[K, mutable.ArrayBuffer[Range]]
+    ): DataFrame.Collected[Z, T] =
+      val keyBuf = Array.newBuilder[K]
+      val framesBuf = IArray.newBuilder[DataFrame[T]]
+      buckets.foreach { (k, vs) =>
+        keyBuf += k
+        val len = vs.map(_.size).sum
+        val cBuf = IArray.newBuilder[Col[?]]
+        val dBuf = IArray.newBuilder[AnyRef]
+        DataFrame.loop(cols) { (col0, i) =>
+          if i == dataIdx then
+            cBuf += col0.copy(isDense = false)
+            dBuf += SparseArr[K](IArray(len), IArray(k))
+          else
+            col0.tag match
+              case given ClassTag[u] =>
+                if col0.isDense then
+                  val arr = data(i).asInstanceOf[Array[u]]
+                  cBuf += col0
+                  dBuf += {
+                    val col = new Array[u](len)
+                    var idx = 0
+                    for r <- vs do
+                      Array.copy(arr, r.start, col, idx, r.size)
+                      idx += r.size
+                    col
+                  }
+                else
+                  val sparse = data(i).asInstanceOf[SparseArr[u]]
+                  cBuf += col0
+                  dBuf += {
+                    if vs.isEmpty then SparseArr[K](IArray.empty, IArray.empty)
+                    else
+                      val buf = SparseArr.Builder(len)
+                      for r <- vs do buf.copyFromSparse(sparse, r.start, r.end)
+                      buf.result
+                  }
+        }
+        framesBuf += DataFrame[T](cBuf.result(), len, dBuf.result())
+      }
+      val keysData = keyBuf.result()
+      val keys =
+        DataFrame[Z](IArray(col.copy(isDense = true)), keysData.length, IArray(keysData))
+      DataFrame.CollectedImpl(keys, framesBuf.result())
+    end packCollsSparse
+
     def packColls[K: ClassTag, Z <: AnyNamedTuple](
         buckets: mutable.HashMap[K, mutable.BitSet]
     ): DataFrame.Collected[Z, T] =
@@ -488,28 +634,27 @@ class DataFrame[T](
       val framesBuf = IArray.newBuilder[DataFrame[T]]
       buckets.foreach { (k, v) =>
         keyBuf += k
+        val len = v.size
         val cBuf = IArray.newBuilder[Col[?]]
         val dBuf = IArray.newBuilder[AnyRef]
+        var vArr: Array[Int] = v.toArray
         DataFrame.loop(cols) { (col0, i) =>
           if i == dataIdx then
             cBuf += col0.copy(isDense = false)
-            dBuf += SparseArr[K](IArray(v.size), IArray(k))
+            dBuf += SparseArr[K](IArray(len), IArray(k))
           else
             col0.tag match
               case given ClassTag[u] =>
                 if col0.isDense then
                   val arr = data(i).asInstanceOf[Array[u]]
                   cBuf += col0
-                  dBuf += v.toArray.map(arr)
+                  dBuf += vArr.map(arr(_))
                 else
                   val sparse = data(i).asInstanceOf[SparseArr[u]]
-                  val d0Buf = Array.newBuilder[u]
-                  DataFrame.loop(sparse): (cell, j) =>
-                    if v.contains(j) then d0Buf += cell
                   cBuf += col0.copy(isDense = true)
-                  dBuf += d0Buf.result()
+                  dBuf += vArr.map(sparse(_))
         }
-        framesBuf += DataFrame[T](cBuf.result(), v.size, dBuf.result())
+        framesBuf += DataFrame[T](cBuf.result(), len, dBuf.result())
       }
       val keysData = keyBuf.result()
       val keys =
@@ -528,10 +673,10 @@ class DataFrame[T](
           packColls(buckets)
         else
           val sparse = data(dataIdx).asInstanceOf[SparseArr[t]]
-          val buckets = mutable.HashMap.empty[t, mutable.BitSet]
-          DataFrame.loop(sparse): (cell, i) =>
-            buckets.getOrElseUpdate(cell, mutable.BitSet.empty).add(i)
-          packColls(buckets)
+          val buckets = mutable.HashMap.empty[t, mutable.ArrayBuffer[Range]]
+          DataFrame.loopRanges(sparse): (cell, from, limit) =>
+            buckets.getOrElseUpdate(cell, mutable.ArrayBuffer.empty).addOne(from until limit)
+          packCollsSparse(buckets)
         end if
     end match
   end collectOn
