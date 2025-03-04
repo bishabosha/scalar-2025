@@ -20,7 +20,7 @@ object customers {
 
     println(df.show())
     println(na.show())
-    val bucketed = na.collectOn[(firstname: ?)].columns[(age: ?)]
+    val bucketed = na.groupBy[(firstname: ?)].columns[(age: ?)]
     println(bucketed.keys.show())
     println(bucketed.get("jamie").get.show())
 
@@ -39,11 +39,11 @@ object customers {
     val merged = df.merge(df1)
     println(merged.show())
 
-    val byLast = merged.collectOn[(lastname: ?)].columns[(id: ?, age: ?)]
+    val byLast = merged.groupBy[(lastname: ?)].columns[(id: ?, age: ?)]
     println(byLast.keys.show())
     println(byLast.get("hampton").get.show())
 
-    val byAge = merged.collectOn[(age: ?)].columns[(age: ?, firstname: ?, lastname: ?)]
+    val byAge = merged.groupBy[(age: ?)] // .columns[(age: ?, firstname: ?, lastname: ?)]
     println(byAge.keys.show())
     println(byAge.get(31).get.show())
 

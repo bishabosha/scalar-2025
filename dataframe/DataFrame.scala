@@ -4,6 +4,7 @@ import java.time.LocalDate
 import scala.reflect.ClassTag
 import scala.util.TupledFunction
 import scala.util.chaining.*
+import scala.collection.mutable
 
 import NamedTuple.{NamedTuple, AnyNamedTuple, Names, DropNames}
 import DataFrame.Col
@@ -14,6 +15,7 @@ import TupleUtils.*
 import scala.util.boundary, boundary.break
 import scala.deriving.Mirror
 import scala.collection.mutable.ArrayBuilder
+import ntdataframe.DataFrame.Single
 
 object DataFrame:
 
@@ -95,6 +97,7 @@ object DataFrame:
       )
 
   def col[T: {Ref as ref}]: ref.type = ref
+  def group[K, T](using ref: GRef[K, T]): ref.type = ref
 
   inline def loop[T](arr: IArray[T])(inline f: (T, Int) => Unit): Unit =
     var i = 0
@@ -222,33 +225,106 @@ object DataFrame:
         assert(init == len, s"expected $len elements, got $init")
         SparseArr(untils.result(), values.result()).tap(check)
 
-  trait Collected[Col <: AnyNamedTuple, T]:
-    def keys: DataFrame[Col]
-    def get(filter: Tuple.Head[DropNames[Col]]): Option[DataFrame[T]]
+  trait GroupBy[A <: AnyNamedTuple, T]:
+    def keys: DataFrame[A]
+    def get(filter: Tuple.Head[DropNames[A]]): Option[DataFrame[T]]
     def columns[
         F <: AnyNamedTuple: {SubNames[T], NamesOf}
-    ]: Collected[Col, FilterNames[Names[F], T]]
+    ]: GroupBy[A, FilterNames[Names[F], T]]
+    def agg(aggregations: AnyNamedTuple): DataFrame[Any] =
+      ???
 
-  private class CollectedImpl[Col <: AnyNamedTuple, T](
-      val keys: DataFrame[Col],
-      private val frames: IArray[DataFrame[T]]
-  ) extends Collected[Col, T] {
+  private class GroupByImpl[N <: String, V: ClassTag, T](
+      upstream: DataFrame[?],
+      mask: Either[
+        mutable.HashMap[V, mutable.BitSet],
+        mutable.HashMap[V, mutable.ArrayBuffer[Range]]
+      ],
+      keyCol: Int,
+      val keys: DataFrame[Single[N, V]],
+      private val dCols: IArray[Col[?]]
+  ) extends GroupBy[Single[N, V], T] {
+    type Index = V
+
     require(keys.cols.size == 1 && keys.cols(0).isDense)
 
     override def columns[
-        F <: AnyNamedTuple: {SubNames[T], NamesOf}
-    ]: Collected[Col, FilterNames[Names[F], T]] =
-      CollectedImpl(keys, frames.map(_.columns[F]))
+        F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}
+    ]: GroupBy[Single[N, V], FilterNames[Names[F], T]] =
+      val set = ns.names.toSet
+      val dCols0 = dCols.filter(c => set(c.name))
+      val keyCol0 =
+        if keyCol < 0 then -1
+        else
+          val needle = dCols(keyCol).name
+          dCols0.indexWhere(_.name == needle)
+      GroupByImpl(upstream.columnsRaw(ns.names), mask, keyCol0, keys, dCols0)
 
-    def get(filter: Tuple.Head[DropNames[Col]]): Option[DataFrame[T]] =
-      val col = keys.cols(0)
-      val data = keys.data(0)
-      val index =
-        col.tag match
-          case given ClassTag[t] =>
-            val arr = data.asInstanceOf[Array[t]]
-            arr.indexOf(filter.asInstanceOf[t])
-      if index == -1 then None else Some(frames(index))
+    def get(filter: Index): Option[DataFrame[T]] =
+      materialize(filter)
+
+    private def materialize(key: V): Option[DataFrame[T]] =
+      mask match
+        case Left(buckets) =>
+          buckets.get(key).map(materializeDense(key, _))
+        case Right(buckets) =>
+          buckets.get(key).map(materializeSparse(key, _))
+
+    private def materializeDense(
+        k: V,
+        buckets: mutable.BitSet
+    ): DataFrame[T] =
+      val len = buckets.size
+      val dBuf = IArray.newBuilder[AnyRef]
+      var vArr: Array[Int] = buckets.toArray
+      val data = upstream.data
+      DataFrame.loop(upstream.cols) { (col, i) =>
+        if i == keyCol then dBuf += SparseArr[V](IArray(len), IArray(k))
+        else
+          col.tag match
+            case given ClassTag[u] =>
+              if col.isDense then
+                val arr = data(i).asInstanceOf[Array[u]]
+                dBuf += vArr.map(arr(_))
+              else
+                val sparse = data(i).asInstanceOf[SparseArr[u]]
+                dBuf += vArr.map(sparse(_))
+      }
+      DataFrame[T](dCols, len, dBuf.result())
+
+    private def materializeSparse(
+        k: V,
+        buckets: mutable.ArrayBuffer[Range]
+    ): DataFrame[T] =
+      val len = buckets.map(_.size).sum
+      val dBuf = IArray.newBuilder[AnyRef]
+      val data = upstream.data
+      DataFrame.loop(upstream.cols) { (col, i) =>
+        if i == keyCol then dBuf += SparseArr[V](IArray(len), IArray(k))
+        else
+          col.tag match
+            case given ClassTag[u] =>
+              if col.isDense then
+                val arr = data(i).asInstanceOf[Array[u]]
+                dBuf += {
+                  val col = new Array[u](len)
+                  var idx = 0
+                  for r <- buckets do
+                    Array.copy(arr, r.start, col, idx, r.size)
+                    idx += r.size
+                  col
+                }
+              else
+                val sparse = data(i).asInstanceOf[SparseArr[u]]
+                dBuf += {
+                  if buckets.isEmpty then SparseArr[V](IArray.empty, IArray.empty)
+                  else
+                    val buf = SparseArr.Builder(len)
+                    for r <- buckets do buf.copyFromSparse(sparse, r.start, r.end)
+                    buf.result
+                }
+      }
+      DataFrame[T](dCols, len, dBuf.result())
   }
 
   private def compile[T](df: DataFrame[?], expr: Expr[T]): Int => T =
@@ -313,8 +389,21 @@ object DataFrame:
     type Fields = NamedTuple.Map[NamedTuple.From[T], Expr]
     def selectDynamic(name: String): Expr[?] = ColRef(name)
 
+  final case class GRef[N <: String, K, T](name: String):
+    def id: Single[N, Expr[K]] = Tuple(ColGRef[K](name)).asInstanceOf
+    object col extends Selectable:
+      type Fields = NamedTuple.Map[NamedTuple.From[T], [X] =>> Expr[Column[X]]]
+      def selectDynamic(name: String): Expr[?] = ColGRef(name)
+
+  sealed trait Column[T]
+
   sealed trait Expr[T]
+  object Expr:
+    extension [T](e: Expr[Column[T]]) def size: Expr[Int] = GCount
+
+  case object GCount extends Expr[Int]
   final case class ColRef[T](name: String) extends Expr[T]
+  final case class ColGRef[T](name: String) extends Expr[Column[T]]
   final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?]])
       extends Expr[T]
 
@@ -615,114 +704,75 @@ class DataFrame[T](
     DataFrame(cBuf.result(), len, dBuf.result())
   end withComputed
 
-  def collectOn[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](using
+  def groupBy[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](using
       NamedTuple.Size[F] =:= 1
-  ): DataFrame.Collected[FilterNames[Names[F], T], T] =
+  ): DataFrame.GroupBy[FilterNames[Names[F], T], T] =
     import scala.collection.mutable
     val name = ns.names(0)
     val dataIdx = cols.indexWhere(_.name == name)
     val col = cols(dataIdx)
 
-    def packCollsSparse[K: ClassTag, Z <: AnyNamedTuple](
+    def packCollsSparse[N <: String, K: ClassTag](
         buckets: mutable.HashMap[K, mutable.ArrayBuffer[Range]]
-    ): DataFrame.Collected[Z, T] =
-      val keyBuf = Array.newBuilder[K]
-      val framesBuf = IArray.newBuilder[DataFrame[T]]
-      buckets.foreach { (k, vs) =>
-        keyBuf += k
-        val len = vs.map(_.size).sum
+    ): DataFrame.GroupBy[Single[N, K], T] =
+      val dCols =
         val cBuf = IArray.newBuilder[Col[?]]
-        val dBuf = IArray.newBuilder[AnyRef]
-        DataFrame.loop(cols) { (col0, i) =>
-          if i == dataIdx then
-            cBuf += col0.copy(isDense = false)
-            dBuf += SparseArr[K](IArray(len), IArray(k))
-          else
-            col0.tag match
-              case given ClassTag[u] =>
-                if col0.isDense then
-                  val arr = data(i).asInstanceOf[Array[u]]
-                  cBuf += col0
-                  dBuf += {
-                    val col = new Array[u](len)
-                    var idx = 0
-                    for r <- vs do
-                      Array.copy(arr, r.start, col, idx, r.size)
-                      idx += r.size
-                    col
-                  }
-                else
-                  val sparse = data(i).asInstanceOf[SparseArr[u]]
-                  cBuf += col0
-                  dBuf += {
-                    if vs.isEmpty then SparseArr[K](IArray.empty, IArray.empty)
-                    else
-                      val buf = SparseArr.Builder(len)
-                      for r <- vs do buf.copyFromSparse(sparse, r.start, r.end)
-                      buf.result
-                  }
+        DataFrame.loop(cols) { (col, i) =>
+          cBuf += (if i == dataIdx then col.copy(isDense = false) else col)
         }
-        framesBuf += DataFrame[T](cBuf.result(), len, dBuf.result())
-      }
-      val keysData = keyBuf.result()
+        cBuf.result()
+      val keysData = buckets.keySet.toArray
       val keys =
-        DataFrame[Z](IArray(col.copy(isDense = true)), keysData.length, IArray(keysData))
-      DataFrame.CollectedImpl(keys, framesBuf.result())
+        DataFrame[Single[N, K]](IArray(col.copy(isDense = true)), keysData.length, IArray(keysData))
+      DataFrame.GroupByImpl(this, Right(buckets), dataIdx, keys, dCols)
     end packCollsSparse
 
-    def packColls[K: ClassTag, Z <: AnyNamedTuple](
+    def packColls[N <: String, K: ClassTag](
         buckets: mutable.HashMap[K, mutable.BitSet]
-    ): DataFrame.Collected[Z, T] =
-      val keyBuf = Array.newBuilder[K]
-      val framesBuf = IArray.newBuilder[DataFrame[T]]
-      buckets.foreach { (k, v) =>
-        keyBuf += k
-        val len = v.size
+    ): DataFrame.GroupBy[Single[N, K], T] =
+      val dcols =
         val cBuf = IArray.newBuilder[Col[?]]
-        val dBuf = IArray.newBuilder[AnyRef]
-        var vArr: Array[Int] = v.toArray
-        DataFrame.loop(cols) { (col0, i) =>
-          if i == dataIdx then
-            cBuf += col0.copy(isDense = false)
-            dBuf += SparseArr[K](IArray(len), IArray(k))
-          else
-            col0.tag match
-              case given ClassTag[u] =>
-                if col0.isDense then
-                  val arr = data(i).asInstanceOf[Array[u]]
-                  cBuf += col0
-                  dBuf += vArr.map(arr(_))
-                else
-                  val sparse = data(i).asInstanceOf[SparseArr[u]]
-                  cBuf += col0.copy(isDense = true)
-                  dBuf += vArr.map(sparse(_))
+        DataFrame.loop(cols) { (col, i) =>
+          cBuf += (if i == dataIdx then col.copy(isDense = false)
+                   else if col.isDense then col
+                   else col.copy(isDense = true))
         }
-        framesBuf += DataFrame[T](cBuf.result(), len, dBuf.result())
-      }
-      val keysData = keyBuf.result()
+        cBuf.result()
+      val keysData = buckets.keySet.toArray
       val keys =
-        DataFrame[Z](IArray(col.copy(isDense = true)), keysData.length, IArray(keysData))
-      DataFrame.CollectedImpl(keys, framesBuf.result())
+        DataFrame[Single[N, K]](IArray(col.copy(isDense = true)), keysData.length, IArray(keysData))
+      DataFrame.GroupByImpl(this, Left(buckets), dataIdx, keys, dcols)
     end packColls
+
+    type Name = Tuple.Head[Names[FilterNames[Names[F], T]]] & String
+    type Target = DataFrame.GroupBy[FilterNames[Names[F], T], T]
 
     col.tag match
       case given ClassTag[t] =>
-        if col.isDense then
-          val arr = data(dataIdx).asInstanceOf[IArray[t]]
-          val buckets = mutable.HashMap.empty[t, mutable.BitSet]
-          DataFrame.loop(arr)((elem, i) =>
-            buckets.getOrElseUpdate(elem, mutable.BitSet.empty).add(i)
-          )
-          packColls(buckets)
-        else
-          val sparse = data(dataIdx).asInstanceOf[SparseArr[t]]
-          val buckets = mutable.HashMap.empty[t, mutable.ArrayBuffer[Range]]
-          DataFrame.loopRanges(sparse): (cell, from, limit) =>
-            buckets.getOrElseUpdate(cell, mutable.ArrayBuffer.empty).addOne(from until limit)
-          packCollsSparse(buckets)
-        end if
+        val res: DataFrame.GroupBy[Single[Name, t], T] =
+          if col.isDense then
+            val arr = data(dataIdx).asInstanceOf[IArray[t]]
+            val buckets = mutable.HashMap.empty[t, mutable.BitSet]
+            DataFrame.loop(arr)((elem, i) =>
+              buckets.getOrElseUpdate(elem, mutable.BitSet.empty).add(i)
+            )
+            packColls[Name, t](buckets)
+          else
+            val sparse = data(dataIdx).asInstanceOf[SparseArr[t]]
+            val buckets = mutable.HashMap.empty[t, mutable.ArrayBuffer[Range]]
+            DataFrame.loopRanges(sparse): (cell, from, limit) =>
+              buckets.getOrElseUpdate(cell, mutable.ArrayBuffer.empty).addOne(from until limit)
+            packCollsSparse[Name, t](buckets)
+          end if
+        res.asInstanceOf[Target]
     end match
-  end collectOn
+  end groupBy
+
+  def debugColumns: Seq[String] =
+    cols.zipWithIndex
+      .map((c, i) =>
+        s"[name:=${c.name}, isDense:=${c.isDense}, tag:=${c.tag}, data:=${data.lift(i)}]"
+      )
 
   def show(n: Int = 10): String = DataFrame.showDF(this, n)
 
