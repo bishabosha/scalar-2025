@@ -2,18 +2,35 @@ package ntdataframe
 
 import NamedTuple.AnyNamedTuple
 import NamedTuple.Names
+import NamedTuple.DropNames
 import NamedTuple.NamedTuple
+import scala.deriving.Mirror
 
 object TupleUtils:
-  trait NamesOf[T <: AnyNamedTuple]:
+  given [N <: Tuple, V <: Tuple]
+    => (mn: Mirror.ProductOf[N], mv: Mirror.ProductOf[V])
+    => (Mirror.ProductOf[NamedTuple[N, V]] {
+      type MirroredLabel = "NamedTuple"
+      type MirroredElemLabels = N
+      type MirroredElemTypes = V
+    }) =
+    mv.asInstanceOf[
+      Mirror.ProductOf[NamedTuple[N, V]] {
+        type MirroredLabel = "NamedTuple"
+        type MirroredElemLabels = N
+        type MirroredElemTypes = V
+      }
+    ]
+
+  trait NamesOf[T]:
     def names: IArray[String]
 
   object NamesOf:
-    final class NamesOfNT[T <: AnyNamedTuple](ns: Tuple) extends NamesOf[T]:
+    final class NamesOfNT[T](ns: Tuple) extends NamesOf[T]:
       val names = ns.toIArray.map(_.asInstanceOf[String])
 
-    transparent inline given [T <: AnyNamedTuple]: NamesOf[T] =
-      new NamesOfNT[T](compiletime.constValueTuple[Names[T]])
+    transparent inline given [T]: NamesOf[T] =
+      new NamesOfNT[T](compiletime.constValueTuple[Names[NamedTuple.From[T]]])
 
   type ContainsAll[X <: Tuple, Y <: Tuple] <: Boolean = X match
     case x *: xs =>

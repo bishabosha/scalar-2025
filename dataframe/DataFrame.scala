@@ -12,6 +12,8 @@ import DataFrame.TagsOf
 
 import TupleUtils.*
 import scala.util.boundary, boundary.break
+import scala.deriving.Mirror
+import scala.collection.mutable.ArrayBuilder
 
 object DataFrame:
 
@@ -20,24 +22,24 @@ object DataFrame:
     val shape = s"shape: (${df.len}, ${df.cols.size})"
 
     val dataRows: IndexedSeq[IArray[String]] =
-      (0 until math.min(n, df.len))
-        .map: i =>
-          df.cols
-            .zip(df.data)
-            .map: (col, data) =>
-              col.tag match
-                case given ClassTag[t] =>
-                  given DFShow[t] = col.dfShow
-                  if col.isDense then
-                    val arr = data.asInstanceOf[Array[t]]
-                    arr(i)
-                      .ensuring(_ != null, s"de null at $i, ${col.name}, show: ${col.dfShow}")
-                      .show
-                  else
-                    val sparse = data.asInstanceOf[SparseArr[t]]
-                    sparse(i)
-                      .ensuring(_ != null, s"sp null at $i, ${col.name}")
-                      .show
+      (0 until math.min(n, df.len)).map { i =>
+        df.cols
+          .zip(df.data)
+          .map: (col, data) =>
+            col.tag match
+              case given ClassTag[t] =>
+                given DFShow[t] = col.dfShow
+                if col.isDense then
+                  val arr = data.asInstanceOf[Array[t]]
+                  arr(i)
+                    .ensuring(_ != null, s"de null at $i, ${col.name}, show: ${col.dfShow}")
+                    .show
+                else
+                  val sparse = data.asInstanceOf[SparseArr[t]]
+                  sparse(i)
+                    .ensuring(_ != null, s"sp null at $i, ${col.name}")
+                    .show
+      }
 
     // Calculate column widths
     val columnWidths: Seq[Int] = df.cols.zipWithIndex.map: (col, index) =>
@@ -75,19 +77,21 @@ object DataFrame:
     sb.result()
   end showDF
 
-  trait TagsOf[T <: AnyNamedTuple]:
+  trait TagsOf[T]:
+    def names: IArray[String]
     def tags: IArray[ClassTag[?]]
     def shows: IArray[DFShow[?]]
 
   object TagsOf:
-    final class TagsOfNT[T <: AnyNamedTuple](ts: Tuple, ss: Tuple) extends TagsOf[T]:
+    final class TagsOfNT[T](val names: IArray[String], ts: Tuple, ss: Tuple) extends TagsOf[T]:
       val tags = ts.toIArray.map(_.asInstanceOf[ClassTag[?]])
       val shows = ss.toIArray.map(_.asInstanceOf[DFShow[?]])
 
-    transparent inline given [T <: AnyNamedTuple]: TagsOf[T] =
+    transparent inline given [T: NamesOf as ns]: TagsOf[T] =
       TagsOfNT[T](
-        compiletime.summonAll[Tuple.Map[DropNames[T], ClassTag]],
-        compiletime.summonAll[Tuple.Map[DropNames[T], DFShow]]
+        ns.names,
+        compiletime.summonAll[Tuple.Map[DropNames[NamedTuple.From[T]], ClassTag]],
+        compiletime.summonAll[Tuple.Map[DropNames[NamedTuple.From[T]], DFShow]]
       )
 
   def col[T: {Ref as ref}]: ref.type = ref
@@ -314,16 +318,55 @@ object DataFrame:
   final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?]])
       extends Expr[T]
 
+  private given [From <: IArray[Any], T: ClassTag]: scala.collection.BuildFrom[From, T, IArray[T]]
+  with
+    def fromSpecific(from: From)(it: IterableOnce[T]): IArray[T] = IArray.from(it)
+    def newBuilder(from: From): scala.collection.mutable.Builder[T, IArray[T]] =
+      IArray.newBuilder[T]
+
+  type Single[N <: String, T] = NamedTuple[N *: EmptyTuple, T *: EmptyTuple]
+  def column[N <: String: ValueOf, T: {ClassTag, DFShow}](
+      data: Single[N, IterableOnce[T]]
+  ): DataFrame[Single[N, T]] =
+    val col = Col(valueOf[N], isDense = true, summon[ClassTag[T]], summon[DFShow[T]])
+    val data0 = data.asInstanceOf[IterableOnce[T] *: EmptyTuple](0).iterator.toArray
+    DataFrame(IArray(col), data0.length, IArray(data0))
+
+  def from[T: {Mirror.ProductOf as m, TagsOf as ts}](
+      data: IterableOnce[T]
+  ): DataFrame[T] =
+    val it = data.iterator
+    val cols = ts.names
+      .lazyZip(ts.tags)
+      .lazyZip(ts.shows)
+      .map((name, tag, show) => Col(name, isDense = true, tag, show.asInstanceOf))
+    val builders = cols.map(c =>
+      c.tag match
+        case given ClassTag[t] =>
+          Array.newBuilder[t]
+    )
+    var len = 0
+    while it.hasNext do
+      val row = it.next()
+      len += 1
+      val p = row.asInstanceOf[Product]
+      var i = 0
+      while i < p.productArity do
+        builders(i) match
+          case b: ArrayBuilder[t] => b.addOne(p.productElement(i).asInstanceOf[t])
+        i += 1
+    val data0 = builders.map[AnyRef](_.result())
+    DataFrame(cols, len, data0)
+
   def readCSV[T](
       src: IterableOnce[String]
   )(using
-      ns: NamesOf[NamedTuple.From[T]],
       ps: ParsersOf[NamedTuple.From[T]],
       ts: TagsOf[NamedTuple.From[T]]
   ): DataFrame[T] =
     readCSVCore(
       src,
-      Some(ns.names),
+      Some(ts.names),
       [T] => ps.parsers(_).asInstanceOf[DFCSVParser[T]],
       [T] => ts.shows(_).asInstanceOf[DFShow[T]],
       ts.tags
@@ -332,7 +375,6 @@ object DataFrame:
   def readCSV[T](
       path: String
   )(using
-      ns: NamesOf[NamedTuple.From[T]],
       ps: ParsersOf[NamedTuple.From[T]],
       ts: TagsOf[NamedTuple.From[T]]
   ): DataFrame[T] =
@@ -528,22 +570,23 @@ class DataFrame[T](
     DataFrame(cols, len + other.len, dBuf.result())
   }
 
-  def withValue[F <: AnyNamedTuple: {NamesOf as ns, TagsOf as ts}](f: F)(using
+  def withValue[F <: AnyNamedTuple: {TagsOf as ts}](f: F)(using
       Tuple.Disjoint[Names[F], Names[NamedTuple.From[T]]] =:= true
   ): DataFrame[NamedTuple.Concat[NamedTuple.From[T], F]] =
     val vs = f.asInstanceOf[Tuple].toIArray
     val cBuf = IArray.newBuilder[Col[?]] ++= cols
     val dBuf = IArray.newBuilder[AnyRef] ++= data
     val dfShows = ts.shows
+    val names = ts.names
     def showOf[T](i: Int): DFShow[T] = dfShows(i).asInstanceOf[DFShow[T]]
     DataFrame.loop(ts.tags):
       case (tag @ given ClassTag[t], i) =>
         val v: t = vs(i).asInstanceOf[t]
-        cBuf += Col[t](ns.names(i), isDense = false, tag, showOf[t](i))
+        cBuf += Col[t](names(i), isDense = false, tag, showOf(i))
         dBuf += SparseArr[t](IArray(len), IArray(v))
     DataFrame(cBuf.result(), len, dBuf.result())
 
-  def withComputed[F <: AnyNamedTuple: {NamesOf as ns}](
+  def withComputed[F <: AnyNamedTuple](
       f: DataFrame.Ref[T] ?=> F
   )(using
       ts: TagsOf[DataFrame.StripExpr[F]]
@@ -559,7 +602,7 @@ class DataFrame[T](
         .map: e =>
           val e0 = e.asInstanceOf[DataFrame.Expr[?]]
           DataFrame.compile(this, e0)
-    val names = ns.names
+    val names = ts.names
     val cBuf = IArray.newBuilder[Col[?]] ++= cols
     val dBuf = IArray.newBuilder[AnyRef] ++= data
     val dfShows = ts.shows
