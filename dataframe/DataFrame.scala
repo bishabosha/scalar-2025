@@ -398,24 +398,6 @@ object DataFrame:
         opt(args.map(compile(df, _)))
     }
 
-  // private def compileG[T](g: GroupBy[?, ?], gexpr: GExpr[T]): Int => T =
-  //   expr match {
-  //     case ColRef(name) =>
-  //       val idx = df.cols.indexWhere(_.name == name)
-  //       val col = df.cols(idx).asInstanceOf[Col[T]]
-  //       col.tag match
-  //         case given ClassTag[T] =>
-  //           if col.isDense then
-  //             val arr = df.data(idx).asInstanceOf[Array[T]]
-  //             arr(_)
-  //           else
-  //             val sparse = df.data(idx).asInstanceOf[SparseArr[T]]
-  //             sparse(_)
-  //       end match
-  //     case Splice(opt, args) =>
-  //       opt(args.map(compile(df, _)))
-  //   }
-
   type In[G] <: Tuple = G match
     case (g => _) => g & Tuple
 
@@ -459,14 +441,6 @@ object DataFrame:
   final case class Ref[T]() extends Selectable:
     type Fields = NamedTuple.Map[NamedTuple.From[T], Expr]
     def selectDynamic(name: String): Expr[?] = ColRef(name)
-
-  // final case class GRef[N <: String, K, T](name: String):
-  //   def id: Single[N, Expr[K]] = Tuple(ColGRef[K](name)).asInstanceOf
-
-  //   val size: Expr[Int] = GCount
-  //   object col extends Selectable:
-  //     type Fields = NamedTuple.Map[NamedTuple.From[T], [X] =>> Expr[Column[X]]]
-  //     def selectDynamic(name: String): Expr[?] = ColGRef(name)
 
   sealed trait Column[T]
   sealed trait Expr[T]
@@ -860,5 +834,16 @@ class DataFrame[T](
       )
 
   def show(n: Int = 10): String = DataFrame.showDF(this, n)
+
+  def materialiseRows(using m: Mirror.ProductOf[T]): Iterator[T] =
+    val colGetters = cols.map(c => DataFrame.compile[Any](this, DataFrame.ColRef(c.name)))
+    class arrProduct(arr: IArray[Any]) extends Product:
+      def productArity: Int = arr.length
+      def productElement(i: Int): Any = arr(i)
+      def canEqual(that: Any): Boolean = false
+
+    Iterator.tabulate(len): i =>
+      val rowData = colGetters.map(_(i))
+      m.fromProduct(arrProduct(rowData))
 
 end DataFrame
