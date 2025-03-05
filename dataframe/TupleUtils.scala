@@ -44,6 +44,9 @@ object TupleUtils:
     Names[NamedTuple.From[T]]
   ] =:= true
 
+  type InverseMapNT[T <: AnyNamedTuple, F[_]] =
+    NamedTuple.Map[T, [X] =>> X match { case F[t] => t }]
+
   type FilterNames[N <: Tuple, T] <: AnyNamedTuple = NamedTuple.From[T] match
     case NamedTuple[ns, vs] => FilterNames0[N, ns, vs, EmptyTuple, EmptyTuple]
 
