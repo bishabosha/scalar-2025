@@ -168,7 +168,7 @@ class DataFrameSuite extends munit.FunSuite:
         |└─────┴───────────┴──────────┴──────┴───────────┘""".stripMargin
     assert(outOfOrder.show() == expectedShow, outOfOrder.show())
 
-    val ordered = outOfOrder.collectOn[(team: ?)]
+    val ordered = outOfOrder.groupBy[(team: ?)]
     val teamA = ordered.get("A").get
     val teamB = ordered.get("B").get
     val teamC = ordered.get("C").get
@@ -206,12 +206,12 @@ class DataFrameSuite extends munit.FunSuite:
 
     type SchemaTeam = (id: String, firstname: String, lastname: String, team: String)
 
-    val teamA1: DataFrame[SchemaTeam] = dfa1.withComputed((team = DataFrame.fun("A") ))
-    val teamA2: DataFrame[SchemaTeam] = dfa2.withComputed((team = DataFrame.fun("A") ))
-    val teamB1: DataFrame[SchemaTeam] = dfb1.withComputed((team = DataFrame.fun("B") ))
-    val teamB2: DataFrame[SchemaTeam] = dfb2.withComputed((team = DataFrame.fun("B") ))
-    val teamC1: DataFrame[SchemaTeam] = dfc1.withComputed((team = DataFrame.fun("C") ))
-    val teamC2: DataFrame[SchemaTeam] = dfc2.withComputed((team = DataFrame.fun("C") ))
+    val teamA1: DataFrame[SchemaTeam] = dfa1.withComputed((team = DataFrame.fun("A")))
+    val teamA2: DataFrame[SchemaTeam] = dfa2.withComputed((team = DataFrame.fun("A")))
+    val teamB1: DataFrame[SchemaTeam] = dfb1.withComputed((team = DataFrame.fun("B")))
+    val teamB2: DataFrame[SchemaTeam] = dfb2.withComputed((team = DataFrame.fun("B")))
+    val teamC1: DataFrame[SchemaTeam] = dfc1.withComputed((team = DataFrame.fun("C")))
+    val teamC2: DataFrame[SchemaTeam] = dfc2.withComputed((team = DataFrame.fun("C")))
 
     type SchemaTeamSplit =
       (id: String, firstname: String, lastname: String, team: String, partition: String)
@@ -239,7 +239,7 @@ class DataFrameSuite extends munit.FunSuite:
         |└─────┴───────────┴──────────┴──────┴───────────┘""".stripMargin
     assert(outOfOrder.show() == expectedShow, outOfOrder.show())
 
-    val ordered = outOfOrder.collectOn[(team: ?)]
+    val ordered = outOfOrder.groupBy[(team: ?)]
     val teamA = ordered.get("A").get
     val teamB = ordered.get("B").get
     val teamC = ordered.get("C").get
