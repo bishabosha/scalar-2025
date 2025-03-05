@@ -70,6 +70,21 @@ class DataFrameSuite extends munit.FunSuite:
         |└─────┴───────────┴──────────┴─────┘""".stripMargin
     assert(df.show() == expectedShow, df.show())
 
+  test("materialize basic csv"):
+    import TupleUtils.{given scala.deriving.Mirror}
+    type Schema = (id: String, firstname: String, lastname: String, age: Int)
+    val df: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSV1.linesIterator)
+    val all = Seq.from(df.materialiseRows)
+    assert(
+      all == Seq(
+        (id = "abc", firstname = "fred", lastname = "hampton", age = 23),
+        (id = "def", firstname = "jamie", lastname = "thompson", age = 28),
+        (id = "ovg", firstname = "jamie", lastname = "xx", age = 57),
+        (id = "ghi", firstname = "ada", lastname = "lovelace", age = 31),
+        (id = "mno", firstname = "grace", lastname = "kelly", age = 42)
+      )
+    )
+
   test("typed basic csv"):
     type Schema = (id: String, firstname: String, lastname: String, age: Int)
     val df: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSV1.linesIterator)
