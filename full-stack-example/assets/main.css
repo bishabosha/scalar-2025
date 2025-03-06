@@ -26,6 +26,26 @@ h1 {
   border-radius: 0.4rem;
 }
 
+table.dataframe {
+  /* should be beautiful with borders, and thick line for header, striped rows */
+  border-collapse: collapse;
+  width: 100%;
+
+  th {
+    font-weight: bold;
+    border-bottom: 2px solid #224951;
+    padding: 2px;
+  }
+
+  tr:nth-child(even) {
+    background-color: #f9f9f9;
+  }
+
+  tr:hover {
+    background-color: #f1f1f1;
+  }
+}
+
 input {
   display: block;
   width: 100%;
