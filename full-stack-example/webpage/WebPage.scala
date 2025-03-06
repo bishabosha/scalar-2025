@@ -8,8 +8,15 @@ import com.raquo.laminar.api.L.*
 import serverlib.fetchhttp.Client
 import serverlib.fetchhttp.upicklex.SerDes.given
 import serverlib.httpservice.HttpService
+import ntdataframe.DataFrame
+import ntdataframe.DataFrame.{fun, col, group}
+import scala.deriving.Mirror
+import ntdataframe.TupleUtils.{given Mirror}
 
 import upicklex.namedTuples.Macros.Implicits.given
+import ntdataframe.DataFrame.TagsOf
+import ntdataframe.DFShow
+import ntdataframe.laminar.LaminarDataFrame
 
 val client = Client.ofEndpoints(
   HttpService.endpoints[NoteService],
@@ -18,8 +25,10 @@ val client = Client.ofEndpoints(
 
 def app: HtmlElement =
   val notesVar = Var(Seq.empty[Note])
+  val analysisVar = Var(Option.empty[DataFrame[(word: String, freq: Int)]])
   val deleteBus = EventBus[(id: String)]()
   val saveClicks = EventBus[(title: String, content: String)]()
+  val analyzeClicks = EventBus[String]()
 
   val deletionEvents = deleteBus.events
     .flatMapSwitch: form =>
@@ -35,6 +44,21 @@ def app: HtmlElement =
             .send((body = form))
         )
     )
+
+  val analysisEvents: EventStream[DataFrame[(word: String, freq: Int)]] =
+    analyzeClicks.events
+      .map: text =>
+        def asWord(base: String) =
+          val trimmed = base.toLowerCase.replaceAll("[^a-z0-9]", "")
+          if trimmed.isEmpty then "<symbolic>" else trimmed
+
+        DataFrame
+          .column((base_word = text.split("\\s+")))
+          .withComputed((word = fun(asWord)(col.base_word)))
+          .groupBy[(word: ?)]
+          .agg(
+            group.key ++ (freq = group.size)
+          ) // TODO: sort by freq
 
   def fetchNotesStream() =
     EventStream.fromFuture(
@@ -67,21 +91,39 @@ def app: HtmlElement =
       ),
       button(
         "Create Note",
-        onClick.mapToUnit.compose(
+        onClick.compose(
           _.sample(titleInput.signal, contentTextArea.signal)
         ) --> saveClicks.writer
+      ),
+      button(
+        "Analyse",
+        onClick.compose(
+          _.sample(contentTextArea.signal)
+        ) --> analyzeClicks.writer
       )
     )
   end form
+
+  def displayTable(df: DataFrame[(word: String, freq: Int)]) =
+    div(
+      className := "note-form",
+      LaminarDataFrame.displayAnyTable(df),
+      button(
+        "Close Analysis",
+        onClick.mapTo(None) --> analysisVar.writer
+      )
+    )
 
   div(
     idAttr := "app-container",
     h1("My Notepad"),
     form(),
+    analysisEvents.map(Some(_)) --> analysisVar.writer,
     savedEvents --> notesVar.updater[Note](_ :+ _),
     deletionEvents --> notesVar.updater[String]((ns, id) =>
       ns.filterNot(_.id == id)
     ),
+    child.maybe <-- analysisVar.signal.map(_.map(displayTable)),
     children <-- notesVar.signal.split(_.id)((id, _, sig) => noteElem(id, sig)),
     onMountBind(_ => fetchNotesStream() --> notesVar.writer)
   )
