@@ -7,7 +7,7 @@ import ntdataframe.DataFrame.SparseArr
 
 class DataFrameSuite extends munit.FunSuite:
   def readTestFile(path: String) =
-    Files.readString(Paths.get(s"testResources/$path"))
+    Files.readString(Paths.get(s"test/resources/$path"))
 
   lazy val exampleCSV1 = readTestFile("customers-100.csv")
   lazy val exampleCSV2 = readTestFile("customers-200.csv")
@@ -139,7 +139,7 @@ class DataFrameSuite extends munit.FunSuite:
         |└─────┴───────────┴──────────┴──────┘""".stripMargin
     assert(teamA.show() == expectedShow, teamA.show())
 
-  test("typed sparse column merge collectOn"):
+  test("typed sparse column merge groupBy"):
     type Schema = (id: String, firstname: String, lastname: String)
     val dfa1: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSVa1.linesIterator)
     val dfa2: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSVa2.linesIterator)
@@ -210,7 +210,7 @@ class DataFrameSuite extends munit.FunSuite:
       teamC.show()
     )
 
-  test("typed dense column merge collectOn"):
+  test("typed dense column merge groupBy"):
     type Schema = (id: String, firstname: String, lastname: String)
     val dfa1: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSVa1.linesIterator)
     val dfa2: DataFrame[Schema] = DataFrame.readCSV[Schema](exampleCSVa2.linesIterator)

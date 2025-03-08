@@ -752,6 +752,60 @@ class DataFrame[T](
     DataFrame(cBuf.result(), len, dBuf.result())
   end withComputed
 
+  def sort[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](descending: Boolean = false)(using
+      NamedTuple.Size[F] =:= 1
+  )[X <: LookupName[Tuple.Head[Names[F]], T]: Ordering as ord]: DataFrame[T] =
+    val name = ns.names(0)
+    val dataIdx = cols.indexWhere(_.name == name)
+    val col = cols(dataIdx)
+
+    // todo: use ranges if it is a sparse column
+    val indices =
+      col.tag match
+        case given ClassTag[X @unchecked] =>
+          val ord0 = if descending then ord.reverse else ord
+          // Get values from the sort column
+          val getElem =
+            if col.isDense then
+              val d = data(dataIdx).asInstanceOf[Array[X]]
+              (i: java.lang.Integer) => d(i.intValue)
+            else
+              val sparse = data(dataIdx).asInstanceOf[SparseArr[X]]
+              (i: java.lang.Integer) => sparse(i.intValue)
+
+          // Create and sort indices based on column values
+          val indices = Array.tabulate(len)(java.lang.Integer.valueOf)
+          java.util.Arrays.sort(indices, ord0.on(getElem))
+          indices.map(_.intValue)
+    end indices
+
+    // Remap all columns based on sorted indices
+    val dBuf = IArray.newBuilder[AnyRef]
+    DataFrame.loop(cols) { (col, i) =>
+      col.tag match
+        case given ClassTag[c] =>
+          if col.isDense then
+            val oldArr = data(i).asInstanceOf[Array[c]]
+            val newArr = Array.ofDim[c](len)
+            var j = 0
+            while j < len do
+              newArr(j) = oldArr(indices(j))
+              j += 1
+            dBuf += newArr
+          else
+            // todo: keep sparse?
+            val sparse = data(i).asInstanceOf[SparseArr[c]]
+            val newArr = Array.ofDim[c](len)
+            var j = 0
+            while j < len do
+              newArr(j) = sparse(indices(j))
+              j += 1
+            dBuf += newArr
+    }
+
+    DataFrame(cols.map(_.copy(isDense = true)), len, dBuf.result())
+  end sort
+
   object groupBy:
 
     def apply[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](using

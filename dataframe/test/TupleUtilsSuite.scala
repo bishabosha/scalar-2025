@@ -11,6 +11,10 @@ class TupleUtilsSuite extends munit.FunSuite:
     assert(!compiletime.testing.typeChecks("""
       summon[Mirror.Of[(name: String, age: Int)]]"""))
 
+  test("lookupName"):
+    assert(compiletime.testing.typeChecks("""
+      summon[TupleUtils.LookupName["name", (name: String, age: Int)] =:= String]"""))
+
   test("mirror ops"):
     import TupleUtils.given
 

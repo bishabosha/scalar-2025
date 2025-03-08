@@ -14,7 +14,7 @@ object customers {
 
   @main def readcustomers(): Unit =
     val df: DataFrame[Customer] =
-      DataFrame.readCSV[Customer]("testResources/customers-100.csv")
+      DataFrame.readCSV[Customer]("test/resources/customers-100.csv")
 
     val na = df.columns[(firstname: ?, age: ?)]
 
@@ -34,7 +34,7 @@ object customers {
     println(withToday.show())
 
     val df1: DataFrame[Customer] =
-      DataFrame.readCSV[Customer]("testResources/customers-200.csv")
+      DataFrame.readCSV[Customer]("test/resources/customers-200.csv")
 
     val merged = df.merge(df1)
     println(merged.show())
@@ -43,8 +43,8 @@ object customers {
     println(byLast.keys.show())
     println(byLast.get("hampton").get.show())
 
-    val byAge = merged.groupBy[(age: ?)] // .columns[(age: ?, firstname: ?, lastname: ?)]
-    println(byAge.keys.show())
+    val byAge = merged.groupBy[(age: ?)]
+    println(byAge.keys.sort[(age: ?)](descending = true).show())
     println(byAge.get(31).get.show())
 
     val reversedColumns = merged.columns[(age: ?, lastname: ?, firstname: ?, id: ?)]
