@@ -13,7 +13,7 @@ import javax.xml.transform.Source
 
 trait Interp:
   def insert[T](q: InsertQuery[T]): Seq[T]
-  def select[T, IsScalar <: Boolean](q: SelectQuery[T, IsScalar]): Seq[T]
+  def select[T, S <: Shape](q: SelectQuery[T, S]): Seq[T]
   def delete[T](q: DeleteQuery[T]): Unit
 
 object LogBasedStore:
@@ -27,13 +27,10 @@ final class LogBasedStore extends DB with Interp:
   import LogBasedStore.given
 
   override def run[T](q: InsertQuery[T]): T = insert(q).head
-
   override def run[T](q: DeleteQuery[T]): Unit = delete(q)
-
+  override def run[T](q: SelectQuery[T, Shape.Vec]): Seq[T] = select(q)
   @targetName("runSingle")
-  override def run[T](q: SelectQuery[T, false]): Seq[T] = select(q)
-
-  override def run[T](q: SelectQuery[T, true]): T = select(q).head
+  override def run[T](q: SelectQuery[T, Shape.Scalar]): T = select(q).head
 
   private val idCounter = AtomicInteger(0)
   private val data =
@@ -45,13 +42,17 @@ final class LogBasedStore extends DB with Interp:
   def refreshTables(tables: Table[?]*): Unit =
     tables.foreach(t => this.tables.update(t.name, t))
     var latestId = ""
-    Using(scala.io.Source.fromFile("log.txt")) { source =>
+    println(s"[LogBasedStore] Looking for log in ${new java.io.File(".").getCanonicalPath}")
+    val loadRes = Using(scala.io.Source.fromFile("log.txt")) { source =>
+      println(s"[LogBasedStore] Loading log lines from ${source.descr}")
       source.getLines().foreach { line =>
-        // log.updateAndGet(es => line :: es)
         val optId = runEvent(decodeEvent(line))
         if optId != null then latestId = optId
       }
     }
+    if loadRes.isFailure then
+      val err = loadRes.failed.get
+      println(s"[LogBasedStore] Failed to load log: ${err}\n${err.getStackTrace.mkString("\n")}")
     if latestId.nonEmpty then idCounter.set(latestId.toInt + 1)
 
   def logEvent(e: Event): Unit =
@@ -63,16 +64,20 @@ final class LogBasedStore extends DB with Interp:
       .Manager: use =>
         val fw = use(java.io.FileWriter("log.txt", true))
         val pw = use(java.io.PrintWriter(fw, true))
-        log.getAndUpdate(_ => Nil).reverse.foreach(pw.println)
+        val events = log.getAndUpdate(_ => Nil).reverse
+        println(s"[LogBasedStore] Flushing ${events.size} events to disk")
+        events.foreach(pw.println)
       .get
 
   def peekLog: List[String] = log.get.reverse
 
   def runEvent(e: Event): String | Null = e match
     case Event.Insert(id, record) =>
+      println(s"[LogBasedStore] Inserting $id")
       data.update(id, record)
       id
     case Event.Delete(id) =>
+      println(s"[LogBasedStore] Deleting $id")
       data.remove(id)
       null
 
@@ -85,18 +90,27 @@ final class LogBasedStore extends DB with Interp:
   inline val BEGIN = '\u0001'
   inline val SPLIT_PAIR = '\u0002'
   inline val SPLIT = '\u0003'
+  inline val EMPTY = '\u0004'
+  inline val EMPTY_S = "\u0004"
 
   def escape(s: String): String =
-    s.replace("\n", "\\n")
-      .replace("\u0001", "\\u0001")
-      .replace("\u0002", "\\u0002")
-      .replace("\u0003", "\\u0003")
+    if s.isEmpty then EMPTY_S
+    else
+      s
+        .replace("\n", "\\n")
+        .replace("\u0001", "\\u0001")
+        .replace("\u0002", "\\u0002")
+        .replace("\u0003", "\\u0003")
+        .replace("\u0004", "\\u0004")
 
   def unescape(s: String): String =
-    s.replace("\\n", "\n")
-      .replace("\\u0001", "\u0001")
-      .replace("\\u0002", "\u0002")
-      .replace("\\u0003", "\u0003")
+    if s == EMPTY_S then ""
+    else
+      s.replace("\\n", "\n")
+        .replace("\\u0001", "\u0001")
+        .replace("\\u0002", "\u0002")
+        .replace("\\u0003", "\u0003")
+        .replace("\\u0004", "\u0004")
 
   def serEvent(e: Event): String = e match
     case Event.Insert(id, record) =>
@@ -169,11 +183,18 @@ final class LogBasedStore extends DB with Interp:
       logEvent(Event.Insert(id, record))
       Vector(decode(record))
 
-  def select[T, IsScalar <: Boolean](q: SelectQuery[T, IsScalar]): Seq[T] = q match
+  def select[T, S <: Shape](q: SelectQuery[T, S]): Seq[T] = q match
     case SelectQuery.SelectFrom(table) =>
-      data.valuesIterator.collect { case data @ Data(`table`, _) =>
+      println(s"[LogBasedStore] Selecting from $table @ ${System.identityHashCode(data)}")
+      val elems = data.valuesIterator.collect { case data @ Data(`table`, _) =>
         decode(data)
       }.toIndexedSeq
+
+      data.valuesIterator
+        .collect({ case d @ Data(t, _) if t != table => d })
+        .foreach(d => println(s"[LogBasedStore] Skipping $d"))
+
+      elems
 
   def delete[T](q: DeleteQuery[T]): Unit = q match
     case DeleteQuery.DeleteFrom(table) =>

@@ -15,7 +15,6 @@ import serverlib.jdkhttp.Server.effestion
 import serverlib.jdkhttp.upicklex.SerDes.given
 import upicklex.namedTuples.Macros.Implicits.given
 
-
 trait StaticService derives HttpService:
   @get("/")
   def index: Static
@@ -24,8 +23,6 @@ trait StaticService derives HttpService:
   def asset(@path rest: String): Static
 
 case object Note extends Table[model.Note]
-
-val store = LogBasedStore()
 
 val schema = endpoints[StaticService] ++ endpoints[NoteService]
 
@@ -50,6 +47,7 @@ def routes(db: DB): app.Routes = (
 )
 
 @main def serve =
+  val store = LogBasedStore()
   store.refreshTables(Note)
   val server = app
     .handle(routes(store))
