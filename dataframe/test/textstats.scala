@@ -22,5 +22,6 @@ val toLower = (_: String).toLowerCase
     .agg(
       group.key ++ (freq = group.size)
     )
+  val sorted = stats.sort[(freq: ?)](descending = true)
 
-  println(stats.show(Int.MaxValue))
+  println(sorted.show(Int.MaxValue))
