@@ -8,10 +8,17 @@ import Utils.*
 import ntquery.DeleteQuery.Filtered
 import scala.annotation.targetName
 
+enum Shape:
+  case Scalar, Vec
+
+object Shape:
+  type Scalar = Shape.Scalar.type
+  type Vec = Shape.Vec.type
+
 trait Table[T: TableSchema] extends Product:
   final def schema: TableSchema[T] = summon[TableSchema[T]]
   final def name: String = productPrefix
-  final def select: SelectQuery[T, false] = SelectQuery.SelectFrom(this)
+  final def select: SelectQuery[T, Shape.Vec] = SelectQuery.SelectFrom(this)
   final def delete: DeleteQuery[T] = DeleteQuery.DeleteFrom(this)
   final def insert: InsertQuery[T] = InsertQuery.InsertTo(this)
 
@@ -83,9 +90,9 @@ object DeleteQuery:
   case class DeleteFrom[T](schema: Table[T]) extends DeleteQuery[T]
   case class Filtered[T](inner: DeleteQuery[T], filtered: Expr[Boolean]) extends DeleteQuery[T]
 
-sealed trait SelectQuery[T, IsScalar <: Boolean]
+sealed trait SelectQuery[T, S <: Shape]
 object SelectQuery:
-  case class SelectFrom[T](table: Table[T]) extends SelectQuery[T, false]
+  case class SelectFrom[T](table: Table[T]) extends SelectQuery[T, Shape.Vec]
 
 object Utils:
   case class HasNames[N <: Tuple](names: Tuple):
@@ -145,15 +152,11 @@ object Expr:
       case Ref(_)           => sys.error("tried to concat to a ref!")
       case Sel(_, tupField) => sys.error(s"tried to concat to a selection .$tupField!")
 
-type RunResult[T, IsScalar] = IsScalar match
-  case true  => T
-  case false => Seq[T]
-
 trait DB:
 
   def run[T](q: InsertQuery[T]): T
   def run[T](q: DeleteQuery[T]): Unit
+  def run[T](q: SelectQuery[T, Shape.Vec]): Seq[T]
 
   @targetName("runSingle")
-  def run[T](q: SelectQuery[T, false]): Seq[T]
-  def run[T](q: SelectQuery[T, true]): T
+  def run[T](q: SelectQuery[T, Shape.Scalar]): T
