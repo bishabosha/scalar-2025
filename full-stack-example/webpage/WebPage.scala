@@ -49,16 +49,17 @@ def app: HtmlElement =
     analyzeClicks.events
       .map: text =>
         def asWord(base: String) =
-          val trimmed = base.toLowerCase.replaceAll("[^a-z0-9]", "")
+          val trimmed = base.toLowerCase.replaceAll("\\W", "")
           if trimmed.isEmpty then "<symbolic>" else trimmed
 
-        DataFrame
+        val df: DataFrame[(word: String, freq: Int)] = DataFrame
           .column((base_word = text.split("\\s+")))
           .withComputed((word = fun(asWord)(col.base_word)))
           .groupBy[(word: ?)]
           .agg(
             group.key ++ (freq = group.size)
-          ) // TODO: sort by freq
+          )
+        df.sort[(freq: ?)](descending = true)
 
   def fetchNotesStream() =
     EventStream.fromFuture(
