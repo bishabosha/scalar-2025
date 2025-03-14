@@ -68,7 +68,7 @@ object Macros:
         if paramCount <= 64 then
           if paramCount == 64 then -1 else (1L << paramCount) - 1
         else paramCount,
-        allowUnknownKeys = false,
+        allowUnknownKeys = true,
         (params, _) => Tuple.fromArray(params).asInstanceOf[V].withNames[N]
       ):
     lazy val fR = fieldReaders.toArray
