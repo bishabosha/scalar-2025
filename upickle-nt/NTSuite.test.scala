@@ -13,4 +13,10 @@ class NTSuite extends munit.FunSuite {
         == (name = "Jamie", age = 28)
     )
   }
+  test("ignore extra fields") {
+    assert(
+      read[(name: String)]("""{"name":"Jamie","age":28}""")
+        == (name = "Jamie")
+    )
+  }
 }
