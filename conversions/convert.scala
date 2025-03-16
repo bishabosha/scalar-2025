@@ -7,18 +7,18 @@ import NamedTuple.AnyNamedTuple
 import NamedTuple.NamedTuple
 
 extension [T](t: T)
-  def asNamedTuple(using
-      m: Mirror.ProductOf[T]
-  )[U <: AnyNamedTuple](using U <:< NamedTuple.From[T])(using n: Mirror.ProductOf[U]): U =
-    n.fromProduct(t.asInstanceOf[Product])
+  def asNamedTuple[U <: AnyNamedTuple](using
+      U <:< NamedTuple.From[T]
+  )(using m: Mirror.ProductOf[U]): U =
+    m.fromProduct(t.asInstanceOf[Product])
 
 extension [T <: AnyNamedTuple](t: T)
-  def withField[U <: AnyNamedTuple](u: U)(using
+  inline def narrow: NamedTuple[Names[T], DropNames[T]] =
+    t.asInstanceOf[NamedTuple[Names[T], DropNames[T]]]
+  inline def withField[U <: AnyNamedTuple](u: U)(using
       Tuple.Disjoint[Names[T], Names[U]] =:= true
   ): NamedTuple.Concat[T, U] =
-    val t1 = t.asInstanceOf[NamedTuple[Names[T], DropNames[T]]]
-    val u1 = u.asInstanceOf[NamedTuple[Names[U], DropNames[U]]]
-    t1 ++ u1
+    t.narrow ++ u.narrow
 
   def as[U: {Mirror.ProductOf as m}](using T <:< NamedTuple.From[U]): U =
     m.fromProduct(t.asInstanceOf[Product])
