@@ -7,10 +7,10 @@ import NamedTuple.AnyNamedTuple
 import NamedTuple.NamedTuple
 
 extension [T](t: T)
-  def asNamedTuple(using
-      m: Mirror.ProductOf[T]
-  )[U <: AnyNamedTuple](using U <:< NamedTuple.From[T])(using n: Mirror.ProductOf[U]): U =
-    n.fromProduct(t.asInstanceOf[Product])
+  def asNamedTuple[U <: AnyNamedTuple](using
+      U <:< NamedTuple.From[T]
+  )(using m: Mirror.ProductOf[U]): U =
+    m.fromProduct(t.asInstanceOf[Product])
 
 extension [T <: AnyNamedTuple](t: T)
   def withField[U <: AnyNamedTuple](u: U)(using
