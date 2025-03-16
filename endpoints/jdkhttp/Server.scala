@@ -327,7 +327,7 @@ object Server:
       val _ = server.createContext("/", rootHandler(handlers0))
       server.setExecutor(Executors.newVirtualThreadPerTaskExecutor())
       server.start()
-      println("Server started on port " + port)
+      println(s"serving at http://localhost:$port")
       Server(server)
 
     def handlersFromTup[I <: AnyNamedTuple](namesTuple: Tuple, exchangers: Tuple, e: Map[String, HttpService.Route], impls: HandlerFuncs[I]): List[Handler[?,?,?]] =

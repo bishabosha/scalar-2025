@@ -1,2 +1,2 @@
-//> using scala "3.7.0-RC1"
-//> using jvm 23
+//> using scala "3.6.4"
+//> using options -language:experimental.namedTuples
