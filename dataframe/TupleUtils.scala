@@ -41,6 +41,21 @@ object TupleUtils:
     transparent inline given [T]: NamesOf[T] =
       new NamesOfNT[T](compiletime.constValueTuple[Names[NamedTuple.From[T]]])
 
+  trait Strings[T]:
+    def strings: IArray[String]
+
+  object Strings:
+    final class StringsT[T](t: Tuple) extends Strings[T]:
+      val strings = t.toIArray.map(_.asInstanceOf[String])
+
+    transparent inline given [T <: Tuple](using UpperBounded[T, String] =:= true): Strings[T] =
+      new StringsT[T](compiletime.constValueTuple[T])
+
+    type UpperBounded[T <: Tuple, N] <: Boolean = T match
+      case (N *: rest) => UpperBounded[rest, N]
+      case EmptyTuple  => true
+      case _           => false
+
   type ContainsAll[X <: Tuple, Y <: Tuple] <: Boolean = X match
     case x *: xs =>
       Tuple.Contains[Y, x] match
@@ -48,8 +63,10 @@ object TupleUtils:
         case false => false
     case EmptyTuple => true
 
-  type SubNames[T] = [From <: AnyNamedTuple] =>> ContainsAll[
-    Names[From],
+  type SubLabels[T] = [From <: AnyNamedTuple] =>> SubNames[T][Names[From]]
+
+  type SubNames[T] = [N <: Tuple] =>> ContainsAll[
+    N,
     Names[NamedTuple.From[T]]
   ] =:= true
 

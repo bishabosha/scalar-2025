@@ -16,11 +16,12 @@ object customers {
     val df: DataFrame[Customer] =
       DataFrame.readCSV[Customer]("test/resources/customers-100.csv")
 
-    val na = df.columns[(firstname: ?, age: ?)]
+    val na = df.columns((col.firstname, col.age))
 
     println(df.show())
     println(na.show())
-    val bucketed = na.groupBy(col.firstname).columns[(age: ?)]
+    val bucketed: DataFrame.GroupBy[(firstname: String), (age: Int)] =
+      na.groupBy(col.firstname).columns(col.age.*)
     println(bucketed.keys.show())
     println(bucketed.get("jamie").get.show())
 
@@ -39,7 +40,7 @@ object customers {
     val merged = df.merge(df1)
     println(merged.show())
 
-    val byLast = merged.groupBy(col.lastname).columns[(id: ?, age: ?)]
+    val byLast = merged.groupBy(col.lastname).columns((col.id, col.age))
     println(byLast.keys.show())
     println(byLast.get("hampton").get.show())
 
@@ -47,6 +48,6 @@ object customers {
     println(byAge.keys.sort(col.age, descending = true).show())
     println(byAge.get(31).get.show())
 
-    val reversedColumns = merged.columns[(age: ?, lastname: ?, firstname: ?, id: ?)]
+    val reversedColumns = merged.columns((col.age, col.lastname, col.firstname, col.id))
     println(reversedColumns.show(n = 1))
 }
