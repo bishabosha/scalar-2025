@@ -232,9 +232,10 @@ object DataFrame:
   trait GroupBy[A <: AnyNamedTuple, T]:
     def keys: DataFrame[A]
     def get(filter: Tuple.Head[DropNames[A]]): Option[DataFrame[T]]
-    def columns[
-        F <: AnyNamedTuple: {SubNames[T], NamesOf}
-    ]: GroupBy[A, FilterNames[Names[F], T]]
+    def columns[Exprs <: Tuple](
+        f: DataFrame.Ref[T] ?=> Exprs
+    )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T], Strings as ns}]
+        : GroupBy[A, FilterNames[Ls, T]]
     def agg[F <: AnyNamedTuple](
         f: DataFrame.GRef[A, T] ?=> F
     )(using
@@ -257,17 +258,18 @@ object DataFrame:
 
     require(keys.cols.size == 1 && keys.cols(0).isDense)
 
-    override def columns[
-        F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}
-    ]: GroupBy[Single[N, V], FilterNames[Names[F], T]] =
-      val set = ns.names.toSet
+    override def columns[Exprs <: Tuple](
+        f: Ref[T] ?=> Exprs
+    )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T], Strings as ns}]
+        : GroupBy[Single[N, V], FilterNames[Ls, T]] =
+      val set = ns.strings.toSet
       val dCols0 = dCols.filter(c => set(c.name))
       val keyCol0 =
         if keyCol < 0 then -1
         else
           val needle = dCols(keyCol).name
           dCols0.indexWhere(_.name == needle)
-      GroupByImpl(upstream.columnsRaw(ns.names), mask, keyCol0, keys, dCols0)
+      GroupByImpl(upstream.columnsRaw(ns.strings), mask, keyCol0, keys, dCols0)
 
     def agg[F <: AnyNamedTuple](
         f: DataFrame.GRef[Single[N, V], T] ?=> F
@@ -440,9 +442,15 @@ object DataFrame:
         args => i => func(Tuple.fromIArray(args.map(_(i))))
     Splice(opt, argExprs)
 
+  type IsExprs[F <: AnyNamedTuple] = F match
+    case NamedTuple[_, vs] => vs <:< Tuple.Map[vs, [X] =>> DataFrame.Expr[?, ?]]
+  type ExprLabels[Exprs <: Tuple] =
+    Tuple.Map[Exprs, [E] =>> E match { case DataFrame.Expr[n, ?] => n }]
+  type IsExprLabels[Exprs <: Tuple] = [Ls <: Tuple] =>> Ls <:< ExprLabels[Exprs]
+
   final case class Ref[T]() extends Selectable:
-    type Fields = Project[NamedTuple.From[T], Expr]
-    def selectDynamic(name: String): Expr[?, ?] = ColRef(name)
+    type Fields = Project[NamedTuple.From[T], ColRef]
+    def selectDynamic(name: String): ColRef[?, ?] = ColRef(name)
 
   sealed trait Column[T]
   sealed trait Expr[L, T]
@@ -451,7 +459,9 @@ object DataFrame:
   case object GCount extends GExpr[Int]
   final case class GKeys[T]() extends GExpr[T]
 
-  final case class ColRef[L, T](name: String) extends Expr[L, T]
+  final case class ColRef[L, T](name: String) extends Expr[L, T]:
+    inline def * : this.type *: EmptyTuple = Tuple(this)
+
   final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?, ?]])
       extends Expr[Any, T]
 
@@ -653,12 +663,13 @@ class DataFrame[T](
 ):
   outerDf =>
 
-  def columns[
-      F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}
-  ]: DataFrame[FilterNames[Names[F], T]] =
-    columnsRaw(ns.names)
+  def columns[Exprs <: Tuple](
+      f: DataFrame.Ref[T] ?=> Exprs
+  )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T], Strings as ns}]
+      : DataFrame[FilterNames[Ls, T]] =
+    columnsRaw(summon[Strings[Ls]].strings)
 
-  def columns(names: String*): DataFrame[Any] =
+  def columnsAny(names: String*): DataFrame[Any] =
     val missing = names.filterNot(n => cols.exists(_.name == n))
     require(
       missing.isEmpty,
@@ -725,16 +736,13 @@ class DataFrame[T](
         dBuf += SparseArr[t8](IArray(len), IArray(v))
     DataFrame(cBuf.result(), len, dBuf.result())
 
-  type IsExprs[F <: AnyNamedTuple] = F match
-    case NamedTuple[_, vs] => vs <:< Tuple.Map[vs, [X] =>> DataFrame.Expr[?, ?]]
-
   def withComputed[F <: AnyNamedTuple](
       f: DataFrame.Ref[T] ?=> F
   )(using
       ts: TagsOf[DataFrame.StripExpr[F]]
   )(using
       Tuple.Disjoint[Names[F], Names[NamedTuple.From[T]]] =:= true,
-      IsExprs[F]
+      DataFrame.IsExprs[F]
   ): DataFrame[NamedTuple.Concat[NamedTuple.From[T], DataFrame.StripExpr[F]]] =
     val ref = new DataFrame.Ref[T]
     val exprFuncs =
