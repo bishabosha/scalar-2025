@@ -29,15 +29,15 @@ object DataFrame:
           .zip(df.data)
           .map: (col, data) =>
             col.tag match
-              case given ClassTag[t] =>
-                given DFShow[t] = col.dfShow
+              case given ClassTag[t10] =>
+                given DFShow[t10] = col.dfShow
                 if col.isDense then
-                  val arr = data.asInstanceOf[Array[t]]
+                  val arr = data.asInstanceOf[Array[t10]]
                   arr(i)
                     .ensuring(_ != null, s"de null at $i, ${col.name}, show: ${col.dfShow}")
                     .show
                 else
-                  val sparse = data.asInstanceOf[SparseArr[t]]
+                  val sparse = data.asInstanceOf[SparseArr[t10]]
                   sparse(i)
                     .ensuring(_ != null, s"sp null at $i, ${col.name}")
                     .show
@@ -307,8 +307,8 @@ object DataFrame:
 
       loop(dCols): (col, i) =>
         col.tag match
-          case given ClassTag[t] =>
-            val gexpr: GExpr[t] = gexprs(i).asInstanceOf[GExpr[t]]
+          case given ClassTag[t1] =>
+            val gexpr: GExpr[t1] = gexprs(i).asInstanceOf[GExpr[t1]]
             dBuf(i) = materializeExpr(col, gexpr)
       DataFrame[DataFrame.StripGExpr[F]](dcols, keys.len, IArray.unsafeFromArray(dBuf))
     end agg
@@ -380,7 +380,7 @@ object DataFrame:
       DataFrame[T](dCols, len, dBuf.result())
   }
 
-  private def compile[T](df: DataFrame[?], expr: Expr[T]): Int => T =
+  private def compile[T](df: DataFrame[?], expr: Expr[?, T]): Int => T =
     expr match {
       case ColRef(name) =>
         val idx = df.cols.indexWhere(_.name == name)
@@ -404,20 +404,22 @@ object DataFrame:
   type Out[G] = G match
     case (_ => r) => r
 
-  type StripExpr[T <: AnyNamedTuple] = InverseMapNT[T, Expr]
+  type StripExpr[T <: AnyNamedTuple] = InverseMapNT[T, [X] =>> Expr[?, X]]
   type StripGExpr[T <: AnyNamedTuple] = InverseMapNT[T, GExpr]
 
-  def fun[R](f: => R): Expr[R] =
+  def fun[R](f: => R): Expr[Any, R] =
     Splice(_ => _ => f, IArray.empty)
 
-  def fun[I, R](f: I => R)(arg: Expr[I]): Expr[R] =
+  def fun[I, R](f: I => R)(arg: Expr[?, I]): Expr[Any, R] =
     val opt: (IArray[Int => Any]) => Int => R = args =>
       val x1 = args(0).asInstanceOf[Int => I]
       i => f(x1(i))
     Splice(opt, IArray(arg))
 
-  def fun[F, G](f: F)(using tf: TupledFunction[F, G])(in: Tuple.Map[In[G], Expr]): Expr[Out[G]] =
-    val argExprs = in.toIArray.map(_.asInstanceOf[Expr[?]])
+  def fun[F, G](f: F)(using
+      tf: TupledFunction[F, G]
+  )(in: Tuple.Map[In[G], [X] =>> Expr[?, X]]): Expr[Any, Out[G]] =
+    val argExprs = in.toIArray.map(_.asInstanceOf[Expr[?, ?]])
     type Res = Out[G]
     val opt: (IArray[Int => Any]) => Int => Res = argExprs.length match
       case 2 =>
@@ -439,19 +441,19 @@ object DataFrame:
     Splice(opt, argExprs)
 
   final case class Ref[T]() extends Selectable:
-    type Fields = NamedTuple.Map[NamedTuple.From[T], Expr]
-    def selectDynamic(name: String): Expr[?] = ColRef(name)
+    type Fields = Project[NamedTuple.From[T], Expr]
+    def selectDynamic(name: String): Expr[?, ?] = ColRef(name)
 
   sealed trait Column[T]
-  sealed trait Expr[T]
+  sealed trait Expr[L, T]
   sealed trait GExpr[T]
 
   case object GCount extends GExpr[Int]
   final case class GKeys[T]() extends GExpr[T]
 
-  final case class ColRef[T](name: String) extends Expr[T]
-  final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?]])
-      extends Expr[T]
+  final case class ColRef[L, T](name: String) extends Expr[L, T]
+  final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?, ?]])
+      extends Expr[Any, T]
 
   private given [From <: IArray[Any], T: ClassTag]: scala.collection.BuildFrom[From, T, IArray[T]]
   with
@@ -477,8 +479,8 @@ object DataFrame:
       .map((name, tag, show) => Col(name, isDense = true, tag, show.asInstanceOf))
     val builders = cols.map(c =>
       c.tag match
-        case given ClassTag[t] =>
-          Array.newBuilder[t]
+        case given ClassTag[t2] =>
+          Array.newBuilder[t2]
     )
     var len = 0
     while it.hasNext do
@@ -488,7 +490,7 @@ object DataFrame:
       var i = 0
       while i < p.productArity do
         builders(i) match
-          case b: ArrayBuilder[t] => b.addOne(p.productElement(i).asInstanceOf[t])
+          case b: ArrayBuilder[t3] => b.addOne(p.productElement(i).asInstanceOf[t3])
         i += 1
     val data0 = builders.map[AnyRef](_.result())
     DataFrame(cols, len, data0)
@@ -569,8 +571,8 @@ object DataFrame:
     val dBufs = IArray.from(
       colNames.indices.map(i =>
         tag(i) match
-          case given ClassTag[t] =>
-            Array.newBuilder[t]
+          case given ClassTag[t4] =>
+            Array.newBuilder[t4]
       )
     )
 
@@ -585,17 +587,17 @@ object DataFrame:
       val selectedCells = colIdxs.map(row(_))
       loop(selectedCells) { (cell, i) =>
         tag(i) match
-          case given ClassTag[t] =>
-            val parser = ps[t](i)
+          case given ClassTag[t5] =>
+            val parser = ps[t5](i)
             val parsed = parser.parse(cell)
-            dBufs(i).asInstanceOf[mutable.Builder[t, Array[t]]].addOne(parsed.asInstanceOf[t])
+            dBufs(i).asInstanceOf[mutable.Builder[t5, Array[t5]]].addOne(parsed.asInstanceOf[t5])
       }
 
     val cBuf = IArray.newBuilder[Col[?]]
     loop(colNames)((name, i) =>
       tag(i) match
-        case tag @ given ClassTag[t] =>
-          cBuf += Col(name, isDense = true, tag, show[t](i))
+        case tag @ given ClassTag[t6] =>
+          cBuf += Col(name, isDense = true, tag, show[t6](i))
     )
     val data = dBufs.map[AnyRef](_.result())
     DataFrame(cBuf.result(), len, data)
@@ -688,15 +690,15 @@ class DataFrame[T](
     DataFrame.loop(data) { (row, i) =>
       val col = cols(i)
       cols(i).tag match
-        case given ClassTag[t] =>
+        case given ClassTag[t7] =>
           if col.isDense then {
-            val colInit = row.asInstanceOf[Array[t]]
-            val colRest = other.data(i).asInstanceOf[Array[t]]
+            val colInit = row.asInstanceOf[Array[t7]]
+            val colRest = other.data(i).asInstanceOf[Array[t7]]
             val merged = colInit ++ colRest
             dBuf += merged
           } else {
-            val sparse = row.asInstanceOf[SparseArr[t]]
-            val sparseRest = other.data(i).asInstanceOf[SparseArr[t]]
+            val sparse = row.asInstanceOf[SparseArr[t7]]
+            val sparseRest = other.data(i).asInstanceOf[SparseArr[t7]]
             val merged = SparseArr(
               sparse.untils ++ sparseRest.untils.map(_ + len),
               sparse.values ++ sparseRest.values
@@ -717,11 +719,14 @@ class DataFrame[T](
     val names = ts.names
     def showOf[T](i: Int): DFShow[T] = dfShows(i).asInstanceOf[DFShow[T]]
     DataFrame.loop(ts.tags):
-      case (tag @ given ClassTag[t], i) =>
-        val v: t = vs(i).asInstanceOf[t]
-        cBuf += Col[t](names(i), isDense = false, tag, showOf(i))
-        dBuf += SparseArr[t](IArray(len), IArray(v))
+      case (tag @ given ClassTag[t8], i) =>
+        val v: t8 = vs(i).asInstanceOf[t8]
+        cBuf += Col[t8](names(i), isDense = false, tag, showOf(i))
+        dBuf += SparseArr[t8](IArray(len), IArray(v))
     DataFrame(cBuf.result(), len, dBuf.result())
+
+  type IsExprs[F <: AnyNamedTuple] = F match
+    case NamedTuple[_, vs] => vs <:< Tuple.Map[vs, [X] =>> DataFrame.Expr[?, ?]]
 
   def withComputed[F <: AnyNamedTuple](
       f: DataFrame.Ref[T] ?=> F
@@ -729,7 +734,7 @@ class DataFrame[T](
       ts: TagsOf[DataFrame.StripExpr[F]]
   )(using
       Tuple.Disjoint[Names[F], Names[NamedTuple.From[T]]] =:= true,
-      Tuple.IsMappedBy[DataFrame.Expr][DropNames[F]]
+      IsExprs[F]
   ): DataFrame[NamedTuple.Concat[NamedTuple.From[T], DataFrame.StripExpr[F]]] =
     val ref = new DataFrame.Ref[T]
     val exprFuncs =
@@ -737,7 +742,7 @@ class DataFrame[T](
         .asInstanceOf[Tuple]
         .toIArray
         .map: e =>
-          val e0 = e.asInstanceOf[DataFrame.Expr[?]]
+          val e0 = e.asInstanceOf[DataFrame.Expr[?, ?]]
           DataFrame.compile(this, e0)
     val names = ts.names
     val cBuf = IArray.newBuilder[Col[?]] ++= cols
@@ -745,17 +750,18 @@ class DataFrame[T](
     val dfShows = ts.shows
     def showOf[T](i: Int): DFShow[T] = dfShows(i).asInstanceOf[DFShow[T]]
     DataFrame.loop(ts.tags):
-      case (tag @ given ClassTag[t], i) =>
-        val idxToValue = exprFuncs(i).asInstanceOf[Int => t]
-        cBuf += Col[t](names(i), isDense = true, tag, showOf[t](i))
-        dBuf += Array.tabulate[t](len)(idxToValue)
+      case (tag @ given ClassTag[t9], i) =>
+        val idxToValue = exprFuncs(i).asInstanceOf[Int => t9]
+        cBuf += Col[t9](names(i), isDense = true, tag, showOf[t9](i))
+        dBuf += Array.tabulate[t9](len)(idxToValue)
     DataFrame(cBuf.result(), len, dBuf.result())
   end withComputed
 
-  def sort[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](descending: Boolean = false)(using
-      NamedTuple.Size[F] =:= 1
-  )[X <: LookupName[Tuple.Head[Names[F]], T]: Ordering as ord]: DataFrame[T] =
-    val name = ns.names(0)
+  def sort[Col <: String: {SubName[T], ValueOf}, V](
+      f: DataFrame.Ref[T] ?=> DataFrame.Expr[Col, V],
+      descending: Boolean = false
+  )[X <: LookupName[Col, T]: Ordering as ord]: DataFrame[T] =
+    val name = valueOf[Col]
     val dataIdx = cols.indexWhere(_.name == name)
     val col = cols(dataIdx)
 
@@ -808,11 +814,11 @@ class DataFrame[T](
 
   object groupBy:
 
-    def apply[F <: AnyNamedTuple: {SubNames[T], NamesOf as ns}](using
-        NamedTuple.Size[F] =:= 1
-    ): DataFrame.GroupBy[FilterNames[Names[F], T], T] =
+    def apply[Col <: String: {SubName[T], ValueOf}](
+        f: DataFrame.Ref[T] ?=> DataFrame.Expr[Col, ?]
+    ): DataFrame.GroupBy[FilterName[Col, T], T] =
       import scala.collection.mutable
-      val name = ns.names(0)
+      val name = valueOf[Col]
       val dataIdx = cols.indexWhere(_.name == name)
       val col = cols(dataIdx)
 
@@ -820,7 +826,7 @@ class DataFrame[T](
           buckets: mutable.HashMap[K, mutable.ArrayBuffer[Range]]
       ): DataFrame.GroupBy[Single[N, K], T] =
         val dCols =
-          val cBuf = IArray.newBuilder[Col[?]]
+          val cBuf = IArray.newBuilder[DataFrame.Col[?]]
           DataFrame.loop(cols) { (col, i) =>
             cBuf += (if i == dataIdx then col.copy(isDense = false) else col)
           }
@@ -839,7 +845,7 @@ class DataFrame[T](
           buckets: mutable.HashMap[K, mutable.BitSet]
       ): DataFrame.GroupBy[Single[N, K], T] =
         val dcols =
-          val cBuf = IArray.newBuilder[Col[?]]
+          val cBuf = IArray.newBuilder[DataFrame.Col[?]]
           DataFrame.loop(cols) { (col, i) =>
             cBuf += (if i == dataIdx then col.copy(isDense = false)
                      else if col.isDense then col
@@ -856,25 +862,25 @@ class DataFrame[T](
         DataFrame.GroupByImpl(outerDf, Left(buckets), dataIdx, keys, dcols)
       end packColls
 
-      type Name = Tuple.Head[Names[FilterNames[Names[F], T]]] & String
-      type Target = DataFrame.GroupBy[FilterNames[Names[F], T], T]
+      type Name = Tuple.Head[Names[FilterName[Col, T]]] & String
+      type Target = DataFrame.GroupBy[FilterName[Col, T], T]
 
       col.tag match
-        case given ClassTag[t] =>
-          val res: DataFrame.GroupBy[Single[Name, t], T] =
+        case given ClassTag[t0] =>
+          val res: DataFrame.GroupBy[Single[Name, t0], T] =
             if col.isDense then
-              val arr = data(dataIdx).asInstanceOf[IArray[t]]
-              val buckets = mutable.HashMap.empty[t, mutable.BitSet]
+              val arr = data(dataIdx).asInstanceOf[IArray[t0]]
+              val buckets = mutable.HashMap.empty[t0, mutable.BitSet]
               DataFrame.loop(arr)((elem, i) =>
                 buckets.getOrElseUpdate(elem, mutable.BitSet.empty).add(i)
               )
-              packColls[Name, t](buckets)
+              packColls[Name, t0](buckets)
             else
-              val sparse = data(dataIdx).asInstanceOf[SparseArr[t]]
-              val buckets = mutable.HashMap.empty[t, mutable.ArrayBuffer[Range]]
+              val sparse = data(dataIdx).asInstanceOf[SparseArr[t0]]
+              val buckets = mutable.HashMap.empty[t0, mutable.ArrayBuffer[Range]]
               DataFrame.loopRanges(sparse): (cell, from, limit) =>
                 buckets.getOrElseUpdate(cell, mutable.ArrayBuffer.empty).addOne(from until limit)
-              packCollsSparse[Name, t](buckets)
+              packCollsSparse[Name, t0](buckets)
             end if
           res.asInstanceOf[Target]
       end match

@@ -20,7 +20,7 @@ object customers {
 
     println(df.show())
     println(na.show())
-    val bucketed = na.groupBy[(firstname: ?)].columns[(age: ?)]
+    val bucketed = na.groupBy(col.firstname).columns[(age: ?)]
     println(bucketed.keys.show())
     println(bucketed.get("jamie").get.show())
 
@@ -39,12 +39,12 @@ object customers {
     val merged = df.merge(df1)
     println(merged.show())
 
-    val byLast = merged.groupBy[(lastname: ?)].columns[(id: ?, age: ?)]
+    val byLast = merged.groupBy(col.lastname).columns[(id: ?, age: ?)]
     println(byLast.keys.show())
     println(byLast.get("hampton").get.show())
 
-    val byAge = merged.groupBy[(age: ?)]
-    println(byAge.keys.sort[(age: ?)](descending = true).show())
+    val byAge = merged.groupBy(col.age)
+    println(byAge.keys.sort(col.age, descending = true).show())
     println(byAge.get(31).get.show())
 
     val reversedColumns = merged.columns[(age: ?, lastname: ?, firstname: ?, id: ?)]

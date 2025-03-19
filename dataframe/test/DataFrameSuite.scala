@@ -3,7 +3,7 @@ package ntdataframe
 import scala.util.Using
 
 import java.nio.file.{Files, Paths}
-import ntdataframe.DataFrame.SparseArr
+import ntdataframe.DataFrame.{col, SparseArr}
 
 class DataFrameSuite extends munit.FunSuite:
   def readTestFile(path: String) =
@@ -183,7 +183,7 @@ class DataFrameSuite extends munit.FunSuite:
         |└─────┴───────────┴──────────┴──────┴───────────┘""".stripMargin
     assert(outOfOrder.show() == expectedShow, outOfOrder.show())
 
-    val ordered = outOfOrder.groupBy[(team: ?)]
+    val ordered = outOfOrder.groupBy(col.team)
     val teamA = ordered.get("A").get
     val teamB = ordered.get("B").get
     val teamC = ordered.get("C").get
@@ -254,7 +254,7 @@ class DataFrameSuite extends munit.FunSuite:
         |└─────┴───────────┴──────────┴──────┴───────────┘""".stripMargin
     assert(outOfOrder.show() == expectedShow, outOfOrder.show())
 
-    val ordered = outOfOrder.groupBy[(team: ?)]
+    val ordered = outOfOrder.groupBy(col.team)
     val teamA = ordered.get("A").get
     val teamB = ordered.get("B").get
     val teamC = ordered.get("C").get
