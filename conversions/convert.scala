@@ -6,22 +6,34 @@ import NamedTuple.DropNames
 import NamedTuple.AnyNamedTuple
 import NamedTuple.NamedTuple
 
-extension [T](t: T)
-  def asNamedTuple[U <: AnyNamedTuple](using
-      U <:< NamedTuple.From[T]
-  )(using m: Mirror.ProductOf[U]): U =
-    m.fromProduct(t.asInstanceOf[Product])
+sealed trait AsNamedTuple[T]:
+  type Names <: Tuple
+  type DropNames <: Tuple
+  final type Repr = NamedTuple[Names, DropNames]
+  extension (t: T)
+    def narrow: Repr
+    final def toTuple: DropNames = NamedTuple.toTuple(narrow)
 
-extension [T <: AnyNamedTuple](t: T)
-  inline def narrow: NamedTuple[Names[T], DropNames[T]] =
-    t.asInstanceOf[NamedTuple[Names[T], DropNames[T]]]
-  inline def withField[U <: AnyNamedTuple](u: U)(using
-      Tuple.Disjoint[Names[T], Names[U]] =:= true
-  ): NamedTuple.Concat[T, U] =
+object AsNamedTuple:
+  object Impl extends AsNamedTuple[AnyNamedTuple]:
+    extension (t: AnyNamedTuple) override def narrow: Repr = t.asInstanceOf[Repr]
+  transparent inline given [N <: Tuple, V <: Tuple, R <: NamedTuple[N, V]]: AsNamedTuple[R] =
+    Impl.asInstanceOf[AsNamedTuple[R] { type Names = N; type DropNames = V }]
+
+extension [T <: Product, U <: AnyNamedTuple](t: T)(using
+    U <:< NamedTuple.From[T]
+)
+  def asNamedTuple(using m: Mirror.ProductOf[U]): U =
+    m.fromProduct(t)
+
+extension [T <: AnyNamedTuple: {AsNamedTuple as reprT}](t: T)
+  inline def withField[U <: AnyNamedTuple: {AsNamedTuple as reprU}](u: U)(using
+      Tuple.Disjoint[reprT.Names, reprU.Names] =:= true
+  ): NamedTuple.Concat[reprT.Repr, reprU.Repr] =
     t.narrow ++ u.narrow
 
   def as[U: {Mirror.ProductOf as m}](using T <:< NamedTuple.From[U]): U =
-    m.fromProduct(t.asInstanceOf[Product])
+    m.fromProduct(t.toTuple)
 
 case class UserV1(name: String)
 case class UserV2(name: String, age: Option[Int])
