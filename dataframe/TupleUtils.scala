@@ -53,11 +53,24 @@ object TupleUtils:
     Names[NamedTuple.From[T]]
   ] =:= true
 
+  type SubName[T] = [Name <: String] =>> Tuple.Contains[
+    Names[NamedTuple.From[T]],
+    Name
+  ] =:= true
+
   type InverseMapNT[T <: AnyNamedTuple, F[_]] =
     NamedTuple.Map[T, [X] =>> X match { case F[t] => t }]
 
   type FilterNames[N <: Tuple, T] <: AnyNamedTuple = NamedTuple.From[T] match
     case NamedTuple[ns, vs] => FilterNames0[N, ns, vs, EmptyTuple, EmptyTuple]
+
+  type FilterName[N <: String, T] = FilterNames[N *: EmptyTuple, T]
+
+  type Project[T <: AnyNamedTuple, F[_, _]] =
+    NamedTuple[
+      Names[T],
+      Tuple.Map[Tuple.Zip[Names[T], DropNames[T]], [X] =>> X match { case (n, t) => F[n, t] }]
+    ]
 
   type LookupName[N, T] = NamedTuple.From[T] match
     case NamedTuple[ns, vs] =>

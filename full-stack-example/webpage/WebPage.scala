@@ -55,11 +55,11 @@ def app: HtmlElement =
         val df: DataFrame[(word: String, freq: Int)] = DataFrame
           .column((base_word = text.split("\\s+")))
           .withComputed((word = fun(asWord)(col.base_word)))
-          .groupBy[(word: ?)]
+          .groupBy(col.word)
           .agg(
             group.key ++ (freq = group.size)
           )
-        df.sort[(freq: ?)](descending = true)
+        df.sort(col.freq, descending = true)
 
   def fetchNotesStream() =
     EventStream.fromFuture(
