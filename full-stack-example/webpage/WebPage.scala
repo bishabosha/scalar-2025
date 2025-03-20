@@ -52,14 +52,14 @@ def app: HtmlElement =
           val trimmed = base.toLowerCase.replaceAll("\\W", "")
           if trimmed.isEmpty then "<symbolic>" else trimmed
 
-        val df: DataFrame[(word: String, freq: Int)] = DataFrame
+        DataFrame
           .column((base_word = text.split("\\s+")))
           .withComputed((word = fun(asWord)(col.base_word)))
           .groupBy(col.word)
           .agg(
             group.key ++ (freq = group.size)
           )
-        df.sort(col.freq, descending = true)
+          .sort(col.freq, descending = true)
 
   def fetchNotesStream() =
     EventStream.fromFuture(
