@@ -18,6 +18,7 @@ import scala.collection.mutable.ArrayBuilder
 import ntdataframe.DataFrame.Single
 import ntdataframe.DataFrame.IsExprRes
 import ntdataframe.DataFrame.IsConcat
+import ntdataframe.DataFrame.ExprFunc
 
 object DataFrame:
 
@@ -291,13 +292,12 @@ object DataFrame:
             val len = keys.len
             val keyData = keys.data(0).asInstanceOf[Array[V]]
             val arr = new Array[Int](len)
+            val addFreq: ExprAction = mask match
+              case Left(buckets)  => i => arr(i) = buckets(keyData(i)).size
+              case Right(buckets) => i => arr(i) = buckets(keyData(i)).map(_.size).sum
             var i = 0
             while i < len do
-              val key = keyData(i)
-              val freq = mask match
-                case Left(buckets)  => buckets(key).size
-                case Right(buckets) => buckets(key).map(_.size).sum
-              arr(i) = freq
+              addFreq(i)
               i += 1
             arr
       end materializeExpr
@@ -377,7 +377,15 @@ object DataFrame:
       DataFrame[T](dCols, len, dBuf.result())
   }
 
-  private def compile[T](df: DataFrame[?], expr: Expr[?, T]): Int => T =
+  @FunctionalInterface
+  trait ExprFunc[T]:
+    def apply(i: Int): T
+
+  @FunctionalInterface
+  trait ExprAction:
+    def apply(i: Int): Unit
+
+  private def compile[T](df: DataFrame[?], expr: Expr[?, T]): ExprFunc[T] =
     expr match {
       case ColRef(name) =>
         val idx = df.cols.indexWhere(_.name == name)
@@ -405,8 +413,8 @@ object DataFrame:
     Splice(_ => _ => f, IArray.empty)
 
   def fun[I, R](f: I => R)(arg: Expr[?, I]): Expr[Any, R] =
-    val opt: (IArray[Int => Any]) => Int => R = args =>
-      val x1 = args(0).asInstanceOf[Int => I]
+    val opt: (IArray[ExprFunc[?]] => ExprFunc[R]) = args =>
+      val x1 = args(0).asInstanceOf[ExprFunc[I]]
       i => f(x1(i))
     Splice(opt, IArray(arg))
 
@@ -415,7 +423,7 @@ object DataFrame:
   )(in: Tuple.Map[In[G], [X] =>> Expr[?, X]]): Expr[Any, Out[G]] =
     val argExprs = in.toIArray.map(_.asInstanceOf[Expr[?, ?]])
     type Res = Out[G]
-    val opt: (IArray[Int => Any]) => Int => Res = argExprs.length match
+    val opt: (IArray[ExprFunc[?]]) => ExprFunc[Res] = argExprs.length match
       case 2 =>
         val f2 = f.asInstanceOf[(Any, Any) => Res]
         args =>
@@ -486,7 +494,7 @@ object DataFrame:
   final case class ColRef[L, T](name: String) extends Expr[L, T] with ColExpr:
     inline def * : this.type *: EmptyTuple = Tuple(this)
 
-  final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?, ?]])
+  final case class Splice[T](opt: IArray[ExprFunc[?]] => ExprFunc[T], args: IArray[Expr[?, ?]])
       extends Expr[Any, T]
 
   private given [From <: IArray[Any], T: ClassTag]: scala.collection.BuildFrom[From, T, IArray[T]]
@@ -782,9 +790,16 @@ class DataFrame[T](
     def showOf[T](i: Int): DFShow[T] = dfShows(i).asInstanceOf[DFShow[T]]
     DataFrame.loop(ts.tags):
       case (tag @ given ClassTag[t9], i) =>
-        val idxToValue = exprFuncs(i).asInstanceOf[Int => t9]
+        val idxToValue = exprFuncs(i).asInstanceOf[ExprFunc[t9]]
         cBuf += Col[t9](names(i), isDense = true, tag, showOf[t9](i))
-        dBuf += Array.tabulate[t9](len)(idxToValue)
+        dBuf += {
+          val arr = new Array[t9](len)
+          var j = 0
+          while j < len do
+            arr(j) = idxToValue(j)
+            j += 1
+          arr
+        }
     DataFrame(cBuf.result(), len, dBuf.result())
   end withComputed
 
