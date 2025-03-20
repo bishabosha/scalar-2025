@@ -16,6 +16,8 @@ import scala.util.boundary, boundary.break
 import scala.deriving.Mirror
 import scala.collection.mutable.ArrayBuilder
 import ntdataframe.DataFrame.Single
+import ntdataframe.DataFrame.IsExprRes
+import ntdataframe.DataFrame.IsConcat
 
 object DataFrame:
 
@@ -234,15 +236,10 @@ object DataFrame:
     def get(filter: Tuple.Head[DropNames[A]]): Option[DataFrame[T]]
     def columns[Exprs <: Tuple](
         f: DataFrame.Ref[T] ?=> Exprs
-    )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T], Strings as ns}]
-        : GroupBy[A, FilterNames[Ls, T]]
+    )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T]}]: GroupBy[A, FilterNames[Ls, T]]
     def agg[F <: AnyNamedTuple](
         f: DataFrame.GRef[A, T] ?=> F
-    )(using
-        ts: TagsOf[DataFrame.StripGExpr[F]]
-    )(using
-        Tuple.IsMappedBy[DataFrame.GExpr][DropNames[F]]
-    ): DataFrame[DataFrame.StripGExpr[F]]
+    )[R <: AnyNamedTuple: {IsGExprRes[F], TagsOf}]: DataFrame[R]
 
   private class GroupByImpl[N <: String, V: ClassTag, T](
       upstream: DataFrame[?],
@@ -260,24 +257,22 @@ object DataFrame:
 
     override def columns[Exprs <: Tuple](
         f: Ref[T] ?=> Exprs
-    )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T], Strings as ns}]
+    )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T]}]
         : GroupBy[Single[N, V], FilterNames[Ls, T]] =
-      val set = ns.strings.toSet
+      val strings =
+        f(using DataFrame.Ref[T]()).toIArray.map(_.asInstanceOf[DataFrame.ColRef[?, ?]].name)
+      val set = strings.toSet
       val dCols0 = dCols.filter(c => set(c.name))
       val keyCol0 =
         if keyCol < 0 then -1
         else
           val needle = dCols(keyCol).name
           dCols0.indexWhere(_.name == needle)
-      GroupByImpl(upstream.columnsRaw(ns.strings), mask, keyCol0, keys, dCols0)
+      GroupByImpl(upstream.columnsRaw(strings), mask, keyCol0, keys, dCols0)
 
     def agg[F <: AnyNamedTuple](
         f: DataFrame.GRef[Single[N, V], T] ?=> F
-    )(using
-        ts: TagsOf[DataFrame.StripGExpr[F]]
-    )(using
-        Tuple.IsMappedBy[DataFrame.GExpr][DropNames[F]]
-    ): DataFrame[DataFrame.StripGExpr[F]] =
+    )[R <: AnyNamedTuple: {IsGExprRes[F], TagsOf as ts}]: DataFrame[R] =
       val dcols = ts.names
         .lazyZip(ts.tags)
         .lazyZip(ts.shows)
@@ -312,7 +307,7 @@ object DataFrame:
           case given ClassTag[t1] =>
             val gexpr: GExpr[t1] = gexprs(i).asInstanceOf[GExpr[t1]]
             dBuf(i) = materializeExpr(col, gexpr)
-      DataFrame[DataFrame.StripGExpr[F]](dcols, keys.len, IArray.unsafeFromArray(dBuf))
+      DataFrame[R](dcols, keys.len, IArray.unsafeFromArray(dBuf))
     end agg
 
     def get(filter: Index): Option[DataFrame[T]] =
@@ -406,9 +401,6 @@ object DataFrame:
   type Out[G] = G match
     case (_ => r) => r
 
-  type StripExpr[T <: AnyNamedTuple] = InverseMapNT[T, [X] =>> Expr[?, X]]
-  type StripGExpr[T <: AnyNamedTuple] = InverseMapNT[T, GExpr]
-
   def fun[R](f: => R): Expr[Any, R] =
     Splice(_ => _ => f, IArray.empty)
 
@@ -442,10 +434,40 @@ object DataFrame:
         args => i => func(Tuple.fromIArray(args.map(_(i))))
     Splice(opt, argExprs)
 
+  type StripExpr[T <: AnyNamedTuple] = InverseMapNT[T, [X] =>> Expr[?, X]]
+  type StripGExpr[T <: AnyNamedTuple] = InverseMapNT[T, GExpr]
   type IsExprs[F <: AnyNamedTuple] = F match
     case NamedTuple[_, vs] => vs <:< Tuple.Map[vs, [X] =>> DataFrame.Expr[?, ?]]
+  type IsGExprs[F <: AnyNamedTuple] =
+    F <:< NamedTuple.Map[F, [X] =>> DataFrame.GExpr[?]]
+  type GExprTags[F <: AnyNamedTuple] =
+    Tuple.Map[DropNames[F], [X] =>> X match { case DataFrame.GExpr[t] => t }]
+  type GExprRes[F <: AnyNamedTuple] =
+    NamedTuple.Map[F, [X] =>> X match { case DataFrame.GExpr[t] => t }]
+  type ExprRes[F <: AnyNamedTuple] =
+    NamedTuple.Map[F, [X] =>> X match { case DataFrame.Expr[?, t] => t }]
+  type ColExprName[F <: ColExpr] = F match
+    case ColRef[n, ?] => n
+  type ColExprType[F <: ColExpr] = F match
+    case ColRef[?, t] => t
+  type ColName[F <: ColExpr] = [T <: String] =>> T <:< ColExprName[F]
+  type ColType[F <: ColExpr] = [T] =>> T <:< ColExprType[F]
+  type Key[Col <: String, T] = [K <: AnyNamedTuple] =>> K <:< FilterName[Col, T]
+  type IsGExprRes[F <: AnyNamedTuple] = [T <: AnyNamedTuple] =>> T <:< GExprRes[F]
+  type IsExprRes[F <: AnyNamedTuple] = [T <: AnyNamedTuple] =>> T <:< ExprRes[F]
+  trait IsConcat0[T <: AnyNamedTuple, R <: AnyNamedTuple, C <: AnyNamedTuple]
+  object IsConcat0:
+    given [T <: AnyNamedTuple, R <: AnyNamedTuple, N <: Tuple, V <: Tuple]
+      => (Tuple.Disjoint[Names[T], Names[R]] =:= true)
+      => (
+          N <:< Tuple.Concat[Names[T], Names[R]],
+          V <:< Tuple.Concat[DropNames[T], DropNames[R]]
+    ) => IsConcat0[T, R, NamedTuple[N, V]]()
+  type IsConcat[T <: AnyNamedTuple, R <: AnyNamedTuple] =
+    [C <: AnyNamedTuple] =>> IsConcat0[T, R, C]
+  type IsGExprTags[F <: AnyNamedTuple] = [T <: Tuple] =>> T <:< GExprTags[F]
   type ExprLabels[Exprs <: Tuple] =
-    Tuple.Map[Exprs, [E] =>> E match { case DataFrame.Expr[n, ?] => n }]
+    Tuple.Map[Exprs, [E] =>> E match { case DataFrame.ColRef[n, ?] => n }]
   type IsExprLabels[Exprs <: Tuple] = [Ls <: Tuple] =>> Ls <:< ExprLabels[Exprs]
 
   final case class Ref[T]() extends Selectable:
@@ -459,7 +481,9 @@ object DataFrame:
   case object GCount extends GExpr[Int]
   final case class GKeys[T]() extends GExpr[T]
 
-  final case class ColRef[L, T](name: String) extends Expr[L, T]:
+  sealed trait ColExpr extends Expr[?, ?]:
+    def name: String
+  final case class ColRef[L, T](name: String) extends Expr[L, T] with ColExpr:
     inline def * : this.type *: EmptyTuple = Tuple(this)
 
   final case class Splice[T](opt: IArray[Int => Any] => Int => T, args: IArray[Expr[?, ?]])
@@ -665,9 +689,10 @@ class DataFrame[T](
 
   def columns[Exprs <: Tuple](
       f: DataFrame.Ref[T] ?=> Exprs
-  )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T], Strings as ns}]
-      : DataFrame[FilterNames[Ls, T]] =
-    columnsRaw(summon[Strings[Ls]].strings)
+  )[Ls <: Tuple: {DataFrame.IsExprLabels[Exprs], SubNames[T]}]: DataFrame[FilterNames[Ls, T]] =
+    val strings =
+      f(using DataFrame.Ref[T]()).toIArray.map(_.asInstanceOf[DataFrame.ColRef[?, ?]].name)
+    columnsRaw(strings)
 
   def columnsAny(names: String*): DataFrame[Any] =
     val missing = names.filterNot(n => cols.exists(_.name == n))
@@ -738,12 +763,10 @@ class DataFrame[T](
 
   def withComputed[F <: AnyNamedTuple](
       f: DataFrame.Ref[T] ?=> F
-  )(using
-      ts: TagsOf[DataFrame.StripExpr[F]]
-  )(using
-      Tuple.Disjoint[Names[F], Names[NamedTuple.From[T]]] =:= true,
-      DataFrame.IsExprs[F]
-  ): DataFrame[NamedTuple.Concat[NamedTuple.From[T], DataFrame.StripExpr[F]]] =
+  )[
+      R <: AnyNamedTuple: {IsExprRes[F], TagsOf as ts},
+      C <: AnyNamedTuple: IsConcat[NamedTuple.From[T], R]
+  ]: DataFrame[C] =
     val ref = new DataFrame.Ref[T]
     val exprFuncs =
       f(using ref)
@@ -765,26 +788,29 @@ class DataFrame[T](
     DataFrame(cBuf.result(), len, dBuf.result())
   end withComputed
 
-  def sort[Col <: String: {SubName[T], ValueOf}, V](
-      f: DataFrame.Ref[T] ?=> DataFrame.Expr[Col, V],
+  def sort[F <: DataFrame.ColExpr](
+      f: DataFrame.Ref[T] ?=> F,
       descending: Boolean = false
-  )[X <: LookupName[Col, T]: Ordering as ord]: DataFrame[T] =
-    val name = valueOf[Col]
+  )[
+      Col <: String: {DataFrame.ColName[F], SubName[T]},
+      V: {DataFrame.ColType[F], Ordering as ord}
+  ]: DataFrame[T] =
+    val name = f(using DataFrame.Ref[T]()).name
     val dataIdx = cols.indexWhere(_.name == name)
     val col = cols(dataIdx)
 
     // todo: use ranges if it is a sparse column
     val indices =
       col.tag match
-        case given ClassTag[X @unchecked] =>
+        case given ClassTag[V @unchecked] =>
           val ord0 = if descending then ord.reverse else ord
           // Get values from the sort column
           val getElem =
             if col.isDense then
-              val d = data(dataIdx).asInstanceOf[Array[X]]
+              val d = data(dataIdx).asInstanceOf[Array[V]]
               (i: java.lang.Integer) => d(i.intValue)
             else
-              val sparse = data(dataIdx).asInstanceOf[SparseArr[X]]
+              val sparse = data(dataIdx).asInstanceOf[SparseArr[V]]
               (i: java.lang.Integer) => sparse(i.intValue)
 
           // Create and sort indices based on column values
@@ -820,79 +846,80 @@ class DataFrame[T](
     DataFrame(cols.map(_.copy(isDense = true)), len, dBuf.result())
   end sort
 
-  object groupBy:
+  def groupBy[F <: DataFrame.ColExpr](
+      f: DataFrame.Ref[T] ?=> F
+  )[
+      Col <: String: {DataFrame.ColName[F], SubName[T]},
+      K <: AnyNamedTuple: DataFrame.Key[Col, T]
+  ]: DataFrame.GroupBy[K, T] =
+    import scala.collection.mutable
+    val ref = f(using DataFrame.Ref[T]())
+    val name = ref.name
+    val dataIdx = cols.indexWhere(_.name == name)
+    val col = cols(dataIdx)
 
-    def apply[Col <: String: {SubName[T], ValueOf}](
-        f: DataFrame.Ref[T] ?=> DataFrame.Expr[Col, ?]
-    ): DataFrame.GroupBy[FilterName[Col, T], T] =
-      import scala.collection.mutable
-      val name = valueOf[Col]
-      val dataIdx = cols.indexWhere(_.name == name)
-      val col = cols(dataIdx)
+    def packCollsSparse[N <: String, K: ClassTag](
+        buckets: mutable.HashMap[K, mutable.ArrayBuffer[Range]]
+    ): DataFrame.GroupBy[Single[N, K], T] =
+      val dCols =
+        val cBuf = IArray.newBuilder[DataFrame.Col[?]]
+        DataFrame.loop(cols) { (col, i) =>
+          cBuf += (if i == dataIdx then col.copy(isDense = false) else col)
+        }
+        cBuf.result()
+      val keysData = buckets.keySet.toArray
+      val keys =
+        DataFrame[Single[N, K]](
+          IArray(col.copy(isDense = true)),
+          keysData.length,
+          IArray(keysData)
+        )
+      DataFrame.GroupByImpl(outerDf, Right(buckets), dataIdx, keys, dCols)
+    end packCollsSparse
 
-      def packCollsSparse[N <: String, K: ClassTag](
-          buckets: mutable.HashMap[K, mutable.ArrayBuffer[Range]]
-      ): DataFrame.GroupBy[Single[N, K], T] =
-        val dCols =
-          val cBuf = IArray.newBuilder[DataFrame.Col[?]]
-          DataFrame.loop(cols) { (col, i) =>
-            cBuf += (if i == dataIdx then col.copy(isDense = false) else col)
-          }
-          cBuf.result()
-        val keysData = buckets.keySet.toArray
-        val keys =
-          DataFrame[Single[N, K]](
-            IArray(col.copy(isDense = true)),
-            keysData.length,
-            IArray(keysData)
-          )
-        DataFrame.GroupByImpl(outerDf, Right(buckets), dataIdx, keys, dCols)
-      end packCollsSparse
+    def packColls[N <: String, K: ClassTag](
+        buckets: mutable.HashMap[K, mutable.BitSet]
+    ): DataFrame.GroupBy[Single[N, K], T] =
+      val dcols =
+        val cBuf = IArray.newBuilder[DataFrame.Col[?]]
+        DataFrame.loop(cols) { (col, i) =>
+          cBuf += (if i == dataIdx then col.copy(isDense = false)
+                   else if col.isDense then col
+                   else col.copy(isDense = true))
+        }
+        cBuf.result()
+      val keysData = buckets.keySet.toArray
+      val keys =
+        DataFrame[Single[N, K]](
+          IArray(col.copy(isDense = true)),
+          keysData.length,
+          IArray(keysData)
+        )
+      DataFrame.GroupByImpl(outerDf, Left(buckets), dataIdx, keys, dcols)
+    end packColls
 
-      def packColls[N <: String, K: ClassTag](
-          buckets: mutable.HashMap[K, mutable.BitSet]
-      ): DataFrame.GroupBy[Single[N, K], T] =
-        val dcols =
-          val cBuf = IArray.newBuilder[DataFrame.Col[?]]
-          DataFrame.loop(cols) { (col, i) =>
-            cBuf += (if i == dataIdx then col.copy(isDense = false)
-                     else if col.isDense then col
-                     else col.copy(isDense = true))
-          }
-          cBuf.result()
-        val keysData = buckets.keySet.toArray
-        val keys =
-          DataFrame[Single[N, K]](
-            IArray(col.copy(isDense = true)),
-            keysData.length,
-            IArray(keysData)
-          )
-        DataFrame.GroupByImpl(outerDf, Left(buckets), dataIdx, keys, dcols)
-      end packColls
+    type Name = Tuple.Head[Names[K]] & String
+    type Target = DataFrame.GroupBy[K, T]
 
-      type Name = Tuple.Head[Names[FilterName[Col, T]]] & String
-      type Target = DataFrame.GroupBy[FilterName[Col, T], T]
-
-      col.tag match
-        case given ClassTag[t0] =>
-          val res: DataFrame.GroupBy[Single[Name, t0], T] =
-            if col.isDense then
-              val arr = data(dataIdx).asInstanceOf[IArray[t0]]
-              val buckets = mutable.HashMap.empty[t0, mutable.BitSet]
-              DataFrame.loop(arr)((elem, i) =>
-                buckets.getOrElseUpdate(elem, mutable.BitSet.empty).add(i)
-              )
-              packColls[Name, t0](buckets)
-            else
-              val sparse = data(dataIdx).asInstanceOf[SparseArr[t0]]
-              val buckets = mutable.HashMap.empty[t0, mutable.ArrayBuffer[Range]]
-              DataFrame.loopRanges(sparse): (cell, from, limit) =>
-                buckets.getOrElseUpdate(cell, mutable.ArrayBuffer.empty).addOne(from until limit)
-              packCollsSparse[Name, t0](buckets)
-            end if
-          res.asInstanceOf[Target]
-      end match
-    end apply
+    col.tag match
+      case given ClassTag[t0] =>
+        val res: DataFrame.GroupBy[Single[Name, t0], T] =
+          if col.isDense then
+            val arr = data(dataIdx).asInstanceOf[IArray[t0]]
+            val buckets = mutable.HashMap.empty[t0, mutable.BitSet]
+            DataFrame.loop(arr)((elem, i) =>
+              buckets.getOrElseUpdate(elem, mutable.BitSet.empty).add(i)
+            )
+            packColls[Name, t0](buckets)
+          else
+            val sparse = data(dataIdx).asInstanceOf[SparseArr[t0]]
+            val buckets = mutable.HashMap.empty[t0, mutable.ArrayBuffer[Range]]
+            DataFrame.loopRanges(sparse): (cell, from, limit) =>
+              buckets.getOrElseUpdate(cell, mutable.ArrayBuffer.empty).addOne(from until limit)
+            packCollsSparse[Name, t0](buckets)
+          end if
+        res.asInstanceOf[Target]
+    end match
   end groupBy
 
   def debugColumns: Seq[String] =
