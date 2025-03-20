@@ -17,11 +17,7 @@ import upicklex.namedTuples.Macros.Implicits.given
               content = query
             )
           ),
-          stream = false,
-          options = (
-            seed = 1234,
-            temperature = 0
-          )
+          stream = false
         )
       )
     )

@@ -11,7 +11,7 @@ import serverlib.httpservice.HttpService.model.source.path
 import serverlib.httpservice.HttpService.special.Static
 import serverlib.jdkhttp.Server.Ser
 import serverlib.jdkhttp.Server.ServerBuilder
-import serverlib.jdkhttp.Server.effestion
+import serverlib.jdkhttp.Server.effestion as router
 import serverlib.jdkhttp.upicklex.SerDes.given
 import upicklex.namedTuples.Macros.Implicits.given
 
@@ -26,7 +26,7 @@ case object Note extends Table[model.Note]
 
 val schema = endpoints[StaticService] ++ endpoints[NoteService]
 
-val app = effestion(schema)
+val app = router(schema)
 
 def routes(db: DB): app.Routes = (
   index = _ => Static.fromResource("index.html"),
