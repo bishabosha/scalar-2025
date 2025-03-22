@@ -8,7 +8,7 @@ packageWeb:
 
 packageJs: packageWeb
 	mkdir -p out/resources/assets
-	scala --power package --js -f webpage -o out/resources/assets/webpage.js
+	scala --power package --js -f frontend -o out/resources/assets/webpage.js
 
 serve:
-	scala run webserver --resource-dir ./out/resources
+	scala run backend --resource-dir ./out/resources
