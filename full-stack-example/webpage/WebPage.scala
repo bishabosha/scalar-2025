@@ -70,7 +70,17 @@ def app: HtmlElement =
     div(
       className := "note",
       h2(text <-- note.map(_.title)),
-      p(text <-- note.map(_.content)),
+      p(
+        children <-- note.map(n =>
+          for
+            line <- n.content.linesIterator.toSeq
+            elem <- Seq(
+              span(line),
+              br()
+            )
+          yield elem
+        )
+      ),
       button(
         "Delete Note",
         onClick.mapTo((id = id)) --> deleteBus.writer
