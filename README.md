@@ -4,7 +4,7 @@ Ideas and demonstrations of named tuples to the max
 ## Setup
 
 required tools:
-- `scala` command (>3.5.0)
+- `scala` command (>3.5.0, or use `scala-cli`)
 - `make`
 
 run the following to publish all the sub projects locally:
