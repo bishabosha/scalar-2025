@@ -8,7 +8,7 @@ required tools:
 - `make`
 
 run the following to publish all the sub projects locally:
-- `scala setup.sc`
+- `scala setup.sc` (if this doesn't work try with the `scala-cli` command)
 
 then to run the final webapp:
 ```shell
